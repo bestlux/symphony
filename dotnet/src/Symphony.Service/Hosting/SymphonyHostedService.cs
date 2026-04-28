@@ -14,6 +14,13 @@ namespace Symphony.Service.Hosting;
 
 public sealed class SymphonyHostedService : BackgroundService
 {
+    internal const string TodoState = "Todo";
+    internal const string RunningState = "Running";
+    internal const string ReadyForReviewState = "Ready for Review";
+    internal const string ReviewingState = "Reviewing";
+    internal const string BlockedState = "Blocked";
+    internal const string DoneState = "Done";
+
     private readonly CliOptions _options;
     private readonly WorkflowStore _workflowStore;
     private readonly ConfigResolver _configResolver;
@@ -191,9 +198,10 @@ public sealed class SymphonyHostedService : BackgroundService
         {
             try
             {
-                await MoveClaimedTodoIssueToInProgressAsync(decision, cts.Token).ConfigureAwait(false);
+                var runKind = RunKind.FromIssueState(decision.Issue.State);
+                await MoveClaimedIssueToActiveStateAsync(decision, runKind, cts.Token).ConfigureAwait(false);
 
-                var prompt = _promptRenderer.Render(_workflowStore.Current.PromptTemplate, decision.Issue, attempt);
+                var prompt = BuildRunPrompt(decision.Issue, runKind, attempt);
                 var result = await _agentRunner.RunAsync(
                     new AgentRunRequest(
                         decision.Issue,
@@ -225,11 +233,13 @@ public sealed class SymphonyHostedService : BackgroundService
                 if (result.Status == RunStatus.Succeeded)
                 {
                     _state.RecordCompletion(ToCompletedRunEntry(result, decision.Issue.Id, "retained"));
+                    await MoveCompletedIssueAsync(decision, runKind, result, cts.Token).ConfigureAwait(false);
                     _orchestrator!.MarkCompleted(decision.Issue.Id, scheduleContinuationCheck: true, config, DateTimeOffset.UtcNow);
                 }
                 else if (result.Status != RunStatus.Cancelled)
                 {
                     _state.RecordCompletion(ToCompletedRunEntry(result, decision.Issue.Id, "retained"));
+                    await MoveIssueStateAsync(decision.Issue, BlockedState, $"Agent run failed: {result.Error ?? "unknown error"}", cts.Token).ConfigureAwait(false);
                     _orchestrator!.MarkFailed(decision.Issue.Id, config, DateTimeOffset.UtcNow, result.Error);
                 }
                 else
@@ -264,40 +274,102 @@ public sealed class SymphonyHostedService : BackgroundService
         }, CancellationToken.None);
     }
 
-    private async Task MoveClaimedTodoIssueToInProgressAsync(DispatchDecision decision, CancellationToken cancellationToken)
+    private string BuildRunPrompt(Issue issue, RunKind runKind, int? attempt)
     {
-        const string sourceState = "Todo";
-        const string targetState = "In Progress";
+        var rendered = _promptRenderer.Render(_workflowStore.Current.PromptTemplate, issue, attempt);
+        if (!runKind.IsReviewer)
+        {
+            return rendered;
+        }
 
-        if (!string.Equals(decision.Issue.State, sourceState, StringComparison.OrdinalIgnoreCase))
+        return $"""
+            You are the neutral Symphony reviewer agent for this issue.
+
+            Your job is to review the implementer work, inspect the workspace/repository state, run reasonable validation, fix review issues when the fix is clearly scoped, and produce a review packet.
+
+            If the work is acceptable after your review and any fixes, say so clearly in your final response.
+            If the work is not acceptable and you cannot fix it directly, move the Linear issue to Blocked, explain the blocker, and name the exact next action.
+
+            Review target:
+            {rendered}
+            """;
+    }
+
+    private async Task MoveClaimedIssueToActiveStateAsync(DispatchDecision decision, RunKind runKind, CancellationToken cancellationToken)
+    {
+        if (!runKind.ShouldMoveOnStart)
+        {
+            return;
+        }
+
+        await MoveIssueStateAsync(
+            decision.Issue,
+            runKind.ActiveState,
+            $"Linear state moved from {decision.Issue.State} to {runKind.ActiveState} after dispatch",
+            cancellationToken).ConfigureAwait(false);
+        _orchestrator!.UpdateRunningIssueState(decision.Issue.Id, runKind.ActiveState);
+        _state.SetFromCore(_orchestrator.Snapshot());
+    }
+
+    private async Task MoveCompletedIssueAsync(DispatchDecision decision, RunKind runKind, RunResult result, CancellationToken cancellationToken)
+    {
+        var latestIssue = await FetchLatestIssueAsync(decision.Issue, cancellationToken).ConfigureAwait(false);
+        if (string.Equals(latestIssue.State, BlockedState, StringComparison.OrdinalIgnoreCase))
+        {
+            _state.RecordIssueStateTransition(latestIssue.Identifier, "Agent left issue Blocked; completion transition skipped");
+            return;
+        }
+
+        var targetState = runKind.IsReviewer ? DoneState : ReadyForReviewState;
+        var message = runKind.IsReviewer
+            ? "Reviewer agent approved work and moved issue to Done"
+            : "Implementer agent finished work and moved issue to Ready for Review";
+
+        await MoveIssueStateAsync(latestIssue, targetState, message, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<Issue> FetchLatestIssueAsync(Issue fallback, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var latest = await _tracker.FetchIssueStatesByIdsAsync([fallback.Id], cancellationToken).ConfigureAwait(false);
+            return latest.FirstOrDefault() ?? fallback;
+        }
+        catch (Exception ex)
+            when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Could not refresh Linear issue {IssueIdentifier} before completion transition", fallback.Identifier);
+            return fallback;
+        }
+    }
+
+    private async Task MoveIssueStateAsync(Issue issue, string targetState, string message, CancellationToken cancellationToken)
+    {
+        if (string.Equals(issue.State, targetState, StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
         try
         {
-            await _tracker.UpdateIssueStateAsync(decision.Issue.Id, targetState, cancellationToken).ConfigureAwait(false);
-            _orchestrator!.UpdateRunningIssueState(decision.Issue.Id, targetState);
-            _state.RecordIssueStateTransition(
-                decision.Issue.Identifier,
-                $"Linear state moved from {sourceState} to {targetState} after dispatch");
-            _state.SetFromCore(_orchestrator.Snapshot());
+            await _tracker.UpdateIssueStateAsync(issue.Id, targetState, cancellationToken).ConfigureAwait(false);
+            _state.RecordIssueStateTransition(issue.Identifier, message);
             _logger.LogInformation(
-                "Moved Linear issue {IssueIdentifier} from {SourceState} to {TargetState} after dispatch",
-                decision.Issue.Identifier,
-                sourceState,
+                "Moved Linear issue {IssueIdentifier} from {SourceState} to {TargetState}",
+                issue.Identifier,
+                issue.State,
                 targetState);
         }
         catch (Exception ex)
             when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            var message = $"Linear state move from {sourceState} to {targetState} failed after dispatch: {ex.Message}";
-            _state.RecordIssueStateTransition(decision.Issue.Identifier, message);
+            var failure = $"Linear state move from {issue.State} to {targetState} failed: {ex.Message}";
+            _state.RecordIssueStateTransition(issue.Identifier, failure);
             _logger.LogError(
                 ex,
-                "Failed to move Linear issue {IssueIdentifier} from {SourceState} to {TargetState} after dispatch",
-                decision.Issue.Identifier,
-                sourceState,
+                "Failed to move Linear issue {IssueIdentifier} from {SourceState} to {TargetState}",
+                issue.Identifier,
+                issue.State,
                 targetState);
         }
     }
@@ -441,5 +513,21 @@ public sealed class SymphonyHostedService : BackgroundService
             running?.WorkspaceClean ?? false,
             running?.WorkspaceStatus,
             cleanupOutcome);
+    }
+}
+
+internal sealed record RunKind(bool IsReviewer, string ActiveState)
+{
+    public bool ShouldMoveOnStart => !string.IsNullOrWhiteSpace(ActiveState);
+
+    public static RunKind FromIssueState(string state)
+    {
+        if (string.Equals(state, SymphonyHostedService.ReadyForReviewState, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(state, SymphonyHostedService.ReviewingState, StringComparison.OrdinalIgnoreCase))
+        {
+            return new RunKind(true, SymphonyHostedService.ReviewingState);
+        }
+
+        return new RunKind(false, SymphonyHostedService.RunningState);
     }
 }

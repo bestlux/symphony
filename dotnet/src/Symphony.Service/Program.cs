@@ -10,6 +10,7 @@ using Symphony.Core.Workflow;
 using Symphony.Codex;
 using Symphony.Linear;
 using Symphony.Workspaces;
+using Microsoft.Extensions.FileProviders;
 
 var parsed = CliParser.Parse(args);
 if (!parsed.Success)
@@ -32,6 +33,12 @@ if (parsed.Options.Port is { } port)
     builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
 
     var app = builder.Build();
+    var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+    if (Directory.Exists(webRoot))
+    {
+        app.UseStaticFiles(new StaticFileOptions { FileProvider = new PhysicalFileProvider(webRoot) });
+    }
+
     HttpApi.Map(app);
     await app.RunAsync();
     return 0;

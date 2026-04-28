@@ -1,4 +1,6 @@
 using Symphony.Service.Hosting;
+using Symphony.Abstractions.Issues;
+using Symphony.Abstractions.Tracking;
 
 namespace Symphony.Service.Observability;
 
@@ -6,7 +8,11 @@ public static class HttpApi
 {
     public static void Map(WebApplication app)
     {
-        app.MapGet("/", (RuntimeStateStore state) =>
+        app.MapGet("/", () => Results.Redirect("/operator"));
+
+        app.MapGet("/operator", () => OperatorIndex());
+
+        app.MapGet("/status", (RuntimeStateStore state) =>
         {
             var snapshot = state.Snapshot();
             return Results.Text($"""
@@ -18,6 +24,7 @@ public static class HttpApi
                 <p>Generated at: {snapshot.GeneratedAt:O}</p>
                 <p>Running: {snapshot.Running.Count} Retrying: {snapshot.Retrying.Count} Completed: {snapshot.Completed.Count}</p>
                 <p>Total tokens: {snapshot.CodexTotals.TotalTokens}</p>
+                <p><a href="/operator">Operator cockpit</a></p>
                 <p><a href="/api/v1/state">JSON state</a></p>
                 </body>
                 </html>
@@ -25,6 +32,39 @@ public static class HttpApi
         });
 
         app.MapGet("/api/v1/state", (RuntimeStateStore state) => Results.Json(ToStatePayload(state.Snapshot())));
+
+        app.MapGet("/api/v1/board", async (
+            RuntimeStateStore state,
+            ITrackerClient tracker,
+            ConfigBackedOptions options,
+            CancellationToken cancellationToken) =>
+        {
+            var config = options.CurrentConfig();
+            var workflowStates = new[]
+            {
+                SymphonyHostedService.TodoState,
+                SymphonyHostedService.RunningState,
+                SymphonyHostedService.ReadyForReviewState,
+                SymphonyHostedService.ReviewingState,
+                SymphonyHostedService.BlockedState,
+                SymphonyHostedService.DoneState
+            };
+            var issues = await tracker.FetchIssuesByStatesAsync(workflowStates, cancellationToken).ConfigureAwait(false);
+            return Results.Json(new
+            {
+                generated_at = DateTimeOffset.UtcNow,
+                lanes = workflowStates.Select(workflowState => new
+                {
+                    state = workflowState,
+                    issues = issues
+                        .Where(issue => string.Equals(issue.State, workflowState, StringComparison.OrdinalIgnoreCase))
+                        .Select(issue => BoardIssuePayload(issue))
+                }),
+                runtime = ToStatePayload(state.Snapshot()),
+                dispatch_states = config.Tracker.DispatchStates,
+                active_states = config.Tracker.ActiveStates
+            });
+        });
 
         app.MapGet("/api/v1/health", (RuntimeStateStore state, DaemonControlService control) =>
         {
@@ -113,6 +153,23 @@ public static class HttpApi
         {
             await control.RetryRunAsync(issue_id, cancellationToken).ConfigureAwait(false);
             return Results.Accepted(value: new { accepted = true, issue_id });
+        });
+
+        app.MapPost("/api/v1/issues/{issue_id}/state", async (
+            string issue_id,
+            UpdateIssueStateRequest request,
+            ITrackerClient tracker,
+            RuntimeStateStore state,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.State))
+            {
+                return Results.BadRequest(new { error = new { code = "missing_state", message = "State is required." } });
+            }
+
+            await tracker.UpdateIssueStateAsync(issue_id, request.State, cancellationToken).ConfigureAwait(false);
+            state.RecordIssueStateTransition(issue_id, $"Operator moved issue to {request.State}");
+            return Results.Accepted(value: new { accepted = true, issue_id, state = request.State });
         });
 
         app.MapGet("/api/v1/logs/recent", (int? count, RuntimeStateStore state) =>
@@ -211,8 +268,53 @@ public static class HttpApi
             total_tokens = entry.TotalTokens
         }
     };
+
+    private static object BoardIssuePayload(Issue issue) => new
+    {
+        issue_id = issue.Id,
+        issue_identifier = issue.Identifier,
+        title = issue.Title,
+        description = issue.Description,
+        state = issue.State,
+        priority = issue.Priority,
+        branch_name = issue.BranchName,
+        url = issue.Url,
+        labels = issue.Labels,
+        updated_at = issue.UpdatedAt,
+        created_at = issue.CreatedAt,
+        blocked_by = issue.BlockedBy.Select(blocker => new
+        {
+            id = blocker.Id,
+            identifier = blocker.Identifier,
+            state = blocker.State
+        })
+    };
+
+    private static IResult OperatorIndex()
+    {
+        var indexPath = Path.Combine(AppContext.BaseDirectory, "wwwroot", "operator", "index.html");
+        if (!File.Exists(indexPath))
+        {
+            return Results.Text("""
+                <!doctype html>
+                <html>
+                <head><title>Symphony Operator</title></head>
+                <body>
+                <h1>Symphony Operator web assets have not been built.</h1>
+                <p>Run <code>npm install</code> and <code>npm run build</code> in <code>dotnet/src/Symphony.Operator.Web</code>.</p>
+                </body>
+                </html>
+                """, "text/html");
+        }
+
+        return Results.File(indexPath, "text/html");
+    }
 }
 
 public sealed record StopRunRequest(
     [property: System.Text.Json.Serialization.JsonPropertyName("cleanup_workspace")]
     bool CleanupWorkspace);
+
+public sealed record UpdateIssueStateRequest(
+    [property: System.Text.Json.Serialization.JsonPropertyName("state")]
+    string State);

@@ -5,7 +5,13 @@ tracker:
   project_slug: "symphony-net-e7a506c9659d"
   active_states:
     - Todo
-    - In Progress
+    - Running
+    - Ready for Review
+    - Reviewing
+  dispatch_states:
+    - Todo
+    - Ready for Review
+    - Reviewing
   terminal_states:
     - Done
     - Canceled
@@ -98,8 +104,8 @@ Operating rules:
 6. Validate with `dotnet build dotnet/Symphony.slnx` at minimum.
 7. If you discover out-of-scope useful work, create or propose a separate Linear follow-up issue instead of expanding scope.
 8. Final response must summarize changes, validation, blockers, and any follow-up issues.
-9. Do not move implementation issues directly to Done. End code work in Human Review with a review packet.
-10. Before Human Review, attach or describe a reviewable artifact: branch, commit, PR URL, patch location, or clear reason there is no code artifact.
+9. Do not move implementation issues directly to Done. End code work in Ready for Review with a review packet.
+10. Before Ready for Review, attach or describe a reviewable artifact: branch, commit, PR URL, patch location, or clear reason there is no code artifact.
 
 Review packet:
 

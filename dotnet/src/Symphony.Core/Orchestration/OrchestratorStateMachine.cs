@@ -65,11 +65,12 @@ public sealed class OrchestratorStateMachine
     {
         var decisions = new List<DispatchDecision>();
         var activeStates = StateSet(config.Tracker.ActiveStates);
+        var dispatchStates = StateSet(config.Tracker.DispatchStates);
         var terminalStates = StateSet(config.Tracker.TerminalStates);
 
         foreach (var issue in SortIssuesForDispatch(candidates))
         {
-            if (!ShouldDispatchIssue(state, config, issue, activeStates, terminalStates))
+            if (!ShouldDispatchIssue(state, config, issue, activeStates, dispatchStates, terminalStates))
             {
                 continue;
             }
@@ -97,9 +98,10 @@ public sealed class OrchestratorStateMachine
         DateTimeOffset now)
     {
         var activeStates = StateSet(config.Tracker.ActiveStates);
+        var dispatchStates = StateSet(config.Tracker.DispatchStates);
         var terminalStates = StateSet(config.Tracker.TerminalStates);
 
-        if (!ShouldDispatchIssue(state, config, issue, activeStates, terminalStates))
+        if (!ShouldDispatchIssue(state, config, issue, activeStates, dispatchStates, terminalStates))
         {
             ReleaseIssueClaim(state, issue.Id);
             return null;
@@ -403,9 +405,11 @@ public sealed class OrchestratorStateMachine
         SymphonyConfig config,
         Issue issue,
         HashSet<string> activeStates,
+        HashSet<string> dispatchStates,
         HashSet<string> terminalStates)
     {
         return CandidateIssue(issue, activeStates, terminalStates)
+            && IsDispatchState(issue.State, dispatchStates)
             && !TodoIssueBlockedByNonTerminal(issue, terminalStates)
             && !state.Claimed.Contains(issue.Id)
             && !state.Running.ContainsKey(issue.Id)
@@ -507,6 +511,11 @@ public sealed class OrchestratorStateMachine
     private static bool IsActiveState(string state, HashSet<string> activeStates)
     {
         return activeStates.Contains(ConfigResolver.NormalizeIssueState(state));
+    }
+
+    private static bool IsDispatchState(string state, HashSet<string> dispatchStates)
+    {
+        return dispatchStates.Count == 0 || dispatchStates.Contains(ConfigResolver.NormalizeIssueState(state));
     }
 
     private static bool IsTerminalState(string state, HashSet<string> terminalStates)

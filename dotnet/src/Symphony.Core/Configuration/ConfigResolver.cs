@@ -6,6 +6,7 @@ namespace Symphony.Core.Configuration;
 public sealed partial class ConfigResolver
 {
     private static readonly string[] DefaultActiveStates = ["Todo", "In Progress"];
+    private static readonly string[] DefaultDispatchStates = ["Todo"];
     private static readonly string[] DefaultTerminalStates = ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"];
 
     private static readonly IReadOnlyDictionary<string, object?> DefaultApprovalPolicy =
@@ -48,6 +49,7 @@ public sealed partial class ConfigResolver
                 StringValue(tracker, "project_slug"),
                 ResolveSecret(StringValue(tracker, "assignee"), "LINEAR_ASSIGNEE"),
                 StringList(tracker, "active_states", DefaultActiveStates),
+                StringList(tracker, "dispatch_states", DefaultDispatchStates),
                 StringList(tracker, "terminal_states", DefaultTerminalStates)),
             new PollingConfig(PositiveInt(polling, "interval_ms", 30_000)),
             new WorkspaceConfig(workspaceRoot),

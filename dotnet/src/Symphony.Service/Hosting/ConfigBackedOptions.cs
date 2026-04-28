@@ -19,6 +19,7 @@ public sealed class ConfigBackedOptions(WorkflowStore workflowStore, ConfigResol
             ApiKey = config.Tracker.ApiKey,
             ProjectSlug = config.Tracker.ProjectSlug,
             ActiveStates = config.Tracker.ActiveStates,
+            DispatchStates = config.Tracker.DispatchStates,
             TerminalStates = config.Tracker.TerminalStates,
             Assignee = config.Tracker.Assignee
         };

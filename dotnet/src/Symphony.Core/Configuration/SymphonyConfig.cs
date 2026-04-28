@@ -18,6 +18,7 @@ public sealed record TrackerConfig(
     string? ProjectSlug,
     string? Assignee,
     IReadOnlyList<string> ActiveStates,
+    IReadOnlyList<string> DispatchStates,
     IReadOnlyList<string> TerminalStates);
 
 public sealed record PollingConfig(int IntervalMs);
