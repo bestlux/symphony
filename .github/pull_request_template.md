@@ -1,22 +1,27 @@
 #### Context
 
-<!-- Why is this change needed? Length <= 240 chars -->
+<!-- Why is this change needed? Keep this short and concrete. -->
 
 #### TL;DR
 
-*<!-- A short description of what we are changing. Use simple language. Assume reader is not familiar with this code. Length <= 120 chars -->*
+*<!-- One-sentence summary of the change. -->*
 
 #### Summary
 
-- <!-- Details of the changes in bullet points -->
-- <!-- Keep them high level -->
-- <!-- Each item <= 120 chars -->
+- <!-- User-visible or operator-visible change -->
+- <!-- Important implementation detail -->
+- <!-- Any intentionally deferred scope -->
 
-#### Alternatives
+#### Linear
 
-- <!-- What alternatives have been considered? Why not? -->
+- Issue: <!-- IOM-123 or Linear URL -->
+- Workpad: <!-- Updated / not applicable, with reason -->
 
-#### Test Plan
+#### Validation
 
-- [ ] `make -C elixir all`
-- [ ] <!-- Additional targeted checks (list below) -->
+- [ ] `.\scripts\validate-symphony.ps1`
+- Operator smoke: <!-- run result, or "not applicable" with reason -->
+
+#### Risks
+
+- <!-- Known risks, migration concerns, or "None known." -->

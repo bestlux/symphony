@@ -4,7 +4,13 @@ namespace Symphony.Workspaces;
 
 public sealed class HookRunner
 {
-    public async Task RunLocalAsync(string hookName, string? command, string workspace, int timeoutMs, CancellationToken cancellationToken = default)
+    public async Task RunLocalAsync(
+        string hookName,
+        string? command,
+        string workspace,
+        int timeoutMs,
+        CancellationToken cancellationToken = default,
+        IReadOnlyDictionary<string, string?>? environment = null)
     {
         if (string.IsNullOrWhiteSpace(command))
         {
@@ -12,21 +18,30 @@ public sealed class HookRunner
         }
 
         var (fileName, arguments) = SelectLocalShell(command);
-        var result = await RunProcessAsync(fileName, arguments, workspace, timeoutMs, cancellationToken).ConfigureAwait(false);
+        var result = await RunProcessAsync(fileName, arguments, workspace, timeoutMs, cancellationToken, environment).ConfigureAwait(false);
         if (result.ExitCode != 0)
         {
             throw new WorkspaceException($"Workspace hook '{hookName}' failed with exit code {result.ExitCode}. Output={Summarize(result.Output)}");
         }
     }
 
-    public async Task RunRemoteAsync(SshClient sshClient, string workerHost, string hookName, string? command, string workspace, int timeoutMs, CancellationToken cancellationToken = default)
+    public async Task RunRemoteAsync(
+        SshClient sshClient,
+        string workerHost,
+        string hookName,
+        string? command,
+        string workspace,
+        int timeoutMs,
+        CancellationToken cancellationToken = default,
+        IReadOnlyDictionary<string, string?>? environment = null)
     {
         if (string.IsNullOrWhiteSpace(command))
         {
             return;
         }
 
-        var result = await sshClient.RunAsync(workerHost, $"cd {SshClient.ShellEscape(workspace)} && {command}", timeoutMs, cancellationToken).ConfigureAwait(false);
+        var prefix = RemoteEnvironmentAssignments(environment);
+        var result = await sshClient.RunAsync(workerHost, $"{prefix}cd {SshClient.ShellEscape(workspace)} && {command}", timeoutMs, cancellationToken).ConfigureAwait(false);
         if (result.ExitCode != 0)
         {
             throw new WorkspaceException($"Remote workspace hook '{hookName}' failed on '{workerHost}' with exit code {result.ExitCode}. Output={Summarize(result.Output)}");
@@ -38,7 +53,8 @@ public sealed class HookRunner
         string arguments,
         string? workingDirectory,
         int timeoutMs,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyDictionary<string, string?>? environment = null)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(timeoutMs, 1)));
@@ -54,6 +70,19 @@ public sealed class HookRunner
         if (!string.IsNullOrWhiteSpace(workingDirectory))
         {
             startInfo.WorkingDirectory = workingDirectory;
+        }
+
+        if (environment is not null)
+        {
+            foreach (var (key, value) in environment)
+            {
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                startInfo.Environment[key] = value ?? "";
+            }
         }
 
         using var process = new Process { StartInfo = startInfo };
@@ -128,6 +157,18 @@ public sealed class HookRunner
         }
 
         return null;
+    }
+
+    private static string RemoteEnvironmentAssignments(IReadOnlyDictionary<string, string?>? environment)
+    {
+        if (environment is null || environment.Count == 0)
+        {
+            return "";
+        }
+
+        return string.Concat(environment
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Key))
+            .Select(pair => $"export {pair.Key}={SshClient.ShellEscape(pair.Value ?? "")}\n"));
     }
 
     private static string QuoteForArgument(string value)

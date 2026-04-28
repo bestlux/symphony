@@ -43,12 +43,11 @@ public static class HttpApi
             var workflowStates = new[]
             {
                 SymphonyHostedService.TodoState,
-                SymphonyHostedService.RunningState,
-                SymphonyHostedService.ReadyForReviewState,
-                SymphonyHostedService.ReviewingState,
-                SymphonyHostedService.BlockedState,
-                SymphonyHostedService.DoneState,
-                "Merged"
+                SymphonyHostedService.InProgressState,
+                SymphonyHostedService.HumanReviewState,
+                SymphonyHostedService.MergingState,
+                SymphonyHostedService.ReworkState,
+                SymphonyHostedService.DoneState
             };
             var issues = await tracker.FetchIssuesByStatesAsync(workflowStates, cancellationToken).ConfigureAwait(false);
             return Results.Json(new

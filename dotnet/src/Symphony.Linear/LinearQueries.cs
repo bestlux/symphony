@@ -98,6 +98,25 @@ public static class LinearQueries
         }
         """;
 
+    public const string ProjectWorkflowStates = """
+        query SymphonyProjectWorkflowStates($projectSlug: String!, $first: Int!) {
+          projects(filter: {slugId: {eq: $projectSlug}}, first: 1) {
+            nodes {
+              teams {
+                nodes {
+                  states(first: $first) {
+                    nodes {
+                      name
+                      type
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """;
+
     public const string CreateComment = """
         mutation SymphonyCreateComment($issueId: String!, $body: String!) {
           commentCreate(input: {issueId: $issueId, body: $body}) {

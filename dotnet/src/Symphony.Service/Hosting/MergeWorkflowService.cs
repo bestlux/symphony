@@ -11,7 +11,7 @@ public sealed class MergeWorkflowService(
     ITrackerClient tracker,
     ILogger<MergeWorkflowService> logger)
 {
-    private static readonly string[] MergeableStates = ["Done", "Merged"];
+    private static readonly string[] MergeableStates = [SymphonyHostedService.MergingState];
     private static readonly string[] CleanupStates = ["Done", "Merged", "Canceled", "Cancelled", "Duplicate"];
 
     public async Task<MergeWorkspaceResult> MergeAsync(string issueId, bool cleanupWorkspace, string? requestedWorkspace, CancellationToken cancellationToken)
@@ -25,7 +25,7 @@ public sealed class MergeWorkflowService(
         var issue = await FetchIssueAsync(issueId, cancellationToken).ConfigureAwait(false);
         if (!MergeableStates.Any(allowed => string.Equals(issue.State, allowed, StringComparison.OrdinalIgnoreCase)))
         {
-            throw new InvalidOperationException($"Issue must be Done before merge. Current state is '{issue.State}'.");
+            throw new InvalidOperationException($"Legacy local merge requires issue state '{SymphonyHostedService.MergingState}'. Current state is '{issue.State}'.");
         }
 
         var completed = FindLatestCompleted(issueId, requestedWorkspace)
@@ -61,7 +61,7 @@ public sealed class MergeWorkflowService(
         }
 
         var comment = $"""
-            Merged by Symphony Operator.
+            Legacy local merge by Symphony Operator.
 
             Commit: `{sha}`
             Workspace: `{workspace}`
@@ -72,18 +72,18 @@ public sealed class MergeWorkflowService(
         await tracker.CreateCommentAsync(issue.Id, comment, cancellationToken).ConfigureAwait(false);
         try
         {
-            await tracker.UpdateIssueStateAsync(issue.Id, "Merged", cancellationToken).ConfigureAwait(false);
+            await tracker.UpdateIssueStateAsync(issue.Id, SymphonyHostedService.DoneState, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            logger.LogInformation(ex, "Could not move {IssueIdentifier} to Merged; leaving Linear state unchanged", issue.Identifier);
-            await tracker.CreateCommentAsync(issue.Id, "Symphony could not move this issue to `Merged`; create a Linear `Merged` workflow state to enable the lane-backed state transition.", cancellationToken).ConfigureAwait(false);
+            logger.LogInformation(ex, "Could not move {IssueIdentifier} to Done after legacy local merge; leaving Linear state unchanged", issue.Identifier);
+            await tracker.CreateCommentAsync(issue.Id, "Symphony could not move this issue to `Done` after legacy local merge; check the Linear workflow state configuration.", cancellationToken).ConfigureAwait(false);
         }
 
         state.RecordCompletion(completed with
         {
-            State = "Merged",
-            Status = "Merged",
+            State = SymphonyHostedService.DoneState,
+            Status = "LegacyMerged",
             LastEvent = "workspace/merged",
             LastMessage = comment,
             CompletedAt = DateTimeOffset.UtcNow,
@@ -114,8 +114,7 @@ public sealed class MergeWorkflowService(
             if (!merged && !string.IsNullOrWhiteSpace(issueId))
             {
                 var issue = await FetchIssueAsync(issueId, cancellationToken).ConfigureAwait(false);
-                merged = CleanupStates.Any(allowed => string.Equals(issue.State, allowed, StringComparison.OrdinalIgnoreCase))
-                    && string.Equals(issue.State, "Merged", StringComparison.OrdinalIgnoreCase);
+                merged = CleanupStates.Any(allowed => string.Equals(issue.State, allowed, StringComparison.OrdinalIgnoreCase));
             }
 
             if (!merged)

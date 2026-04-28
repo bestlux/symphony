@@ -13,15 +13,12 @@ import {
   Link as LinkIcon,
   ListChecks,
   MessageSquare,
-  Pause,
   PlayCircle,
   RefreshCcw,
   RotateCcw,
   ShieldCheck,
   Square,
   Timer,
-  Trash2,
-  UserCheck,
   Workflow,
   XCircle
 } from "lucide-react";
@@ -133,7 +130,7 @@ type BoardPayload = {
   active_states: string[];
 };
 
-type CardKind = "todo" | "running" | "ready-review" | "reviewing" | "blocked" | "done" | "merged";
+type CardKind = "todo" | "in-progress" | "human-review" | "merging" | "rework" | "done";
 
 type WorkCard = {
   key: string;
@@ -191,12 +188,11 @@ type ReviewItem = {
 
 const laneMeta: Array<Omit<Lane, "cards">> = [
   { key: "todo", name: "Todo", caption: "Queued", tone: "blue", icon: <CircleDot size={16} /> },
-  { key: "running", name: "Running", caption: "Implementer active", tone: "green", icon: <PlayCircle size={16} /> },
-  { key: "ready-review", name: "Ready for Review", caption: "Needs neutral agent", tone: "amber", icon: <ShieldCheck size={16} /> },
-  { key: "reviewing", name: "Reviewing", caption: "Reviewer active", tone: "violet", icon: <Activity size={16} /> },
-  { key: "blocked", name: "Blocked", caption: "Needs intervention", tone: "red", icon: <AlertTriangle size={16} /> },
-  { key: "done", name: "Done", caption: "Approved, not merged", tone: "slate", icon: <CheckCircle2 size={16} /> },
-  { key: "merged", name: "Merged", caption: "Landed in checkout", tone: "green", icon: <GitBranch size={16} /> }
+  { key: "in-progress", name: "In Progress", caption: "Agent implementation", tone: "green", icon: <PlayCircle size={16} /> },
+  { key: "human-review", name: "Human Review", caption: "PR ready for approval", tone: "amber", icon: <ShieldCheck size={16} /> },
+  { key: "merging", name: "Merging", caption: "Landing approved PR", tone: "violet", icon: <GitBranch size={16} /> },
+  { key: "rework", name: "Rework", caption: "Changes requested", tone: "red", icon: <AlertTriangle size={16} /> },
+  { key: "done", name: "Done", caption: "Merged or terminal", tone: "slate", icon: <CheckCircle2 size={16} /> }
 ];
 
 function App() {
@@ -284,7 +280,7 @@ function App() {
           </div>
           <div className="topbar-status">
             <StatusPill tone={health?.operator_actions_available ? "green" : "red"} label={health?.operator_actions_available ? "Actions ready" : "Disconnected"} />
-            <StatusPill tone="blue" label="GPT-5.5 Medium" />
+            <StatusPill tone="blue" label="PR-first flow" />
             <StatusPill tone="slate" label={`${formatNumber(state?.codex_totals.total_tokens ?? 0)} tokens`} />
             <button onClick={() => runAction("refresh", () => post("/api/v1/refresh"))} disabled={busyAction !== ""}>
               <RefreshCcw size={16} /> Refresh
@@ -295,11 +291,11 @@ function App() {
         <section className="hero-strip">
           <div>
             <span>Flow</span>
-            <strong>{"Todo -> Running -> Ready for Review -> Reviewing -> Blocked -> Done"}</strong>
+            <strong>{"Todo -> In Progress -> Human Review -> Merging -> Done"}</strong>
           </div>
           <div>
             <span>Rule</span>
-            <strong>Implementers submit. Neutral reviewers approve.</strong>
+            <strong>Agents open PRs. Humans approve landing.</strong>
           </div>
           <div>
             <span>Generated</span>
@@ -375,13 +371,13 @@ function App() {
                   <button onClick={() => runAction("open-workspace", () => openWorkspace(selected.workspace))} disabled={!selected.workspace || busyAction !== ""}><FolderOpen size={15} />Workspace</button>
                   <button
                     onClick={() => runAction("stop", () => post(`/api/v1/runs/${encodeURIComponent(selected.issueId)}/stop`, { cleanup_workspace: false }))}
-                    disabled={selected.kind !== "running" || busyAction !== ""}
+                    disabled={!selected.key.startsWith("running:") || busyAction !== ""}
                   >
                     <Square size={15} />Stop
                   </button>
                   <button
                     onClick={() => runAction("retry", () => post(`/api/v1/runs/${encodeURIComponent(selected.issueId)}/retry`))}
-                    disabled={busyAction !== ""}
+                    disabled={(!selected.key.startsWith("running:") && !selected.key.startsWith("retry:")) || busyAction !== ""}
                   >
                     <RotateCcw size={15} />Retry
                   </button>
@@ -389,42 +385,30 @@ function App() {
 
                 <div className="review-actions">
                   <button
-                    onClick={() => runAction("start-review", () => moveIssue(selected.issueId, "Reviewing"))}
-                    disabled={selected.kind !== "ready-review" || busyAction !== ""}
+                    onClick={() => runAction("approve-merge", () => moveIssue(selected.issueId, "Merging"))}
+                    disabled={selected.kind !== "human-review" || busyAction !== ""}
                   >
-                    <ShieldCheck size={15} />Start Review
+                    <ShieldCheck size={15} />Approve for Merge
                   </button>
                   <button
-                    onClick={() => runAction("approve", () => moveIssue(selected.issueId, "Done"))}
-                    disabled={selected.kind !== "reviewing" && selected.kind !== "ready-review" || busyAction !== ""}
+                    onClick={() => runAction("request-rework", () => moveIssue(selected.issueId, "Rework"))}
+                    disabled={selected.kind !== "human-review" || busyAction !== ""}
                   >
-                    <CheckCircle2 size={15} />Approve
+                    <MessageSquare size={15} />Request Rework
                   </button>
                   <button
-                    onClick={() => runAction("block", () => moveIssue(selected.issueId, "Blocked"))}
+                    onClick={() => runAction("cancel", () => moveIssue(selected.issueId, "Canceled"))}
                     disabled={busyAction !== ""}
                   >
-                    <XCircle size={15} />Block
+                    <XCircle size={15} />Cancel
                   </button>
                   <button
-                    onClick={() => runAction("request-revision", () => moveIssue(selected.issueId, "Todo"))}
-                    disabled={(selected.kind !== "reviewing" && selected.kind !== "ready-review") || busyAction !== ""}
+                    onClick={() => runAction("send-human-review", () => moveIssue(selected.issueId, "Human Review"))}
+                    disabled={selected.kind !== "in-progress" || busyAction !== ""}
                   >
-                    <MessageSquare size={15} />Revise
+                    <CheckCircle2 size={15} />Mark Review
                   </button>
-                  <button
-                    onClick={() => runAction("merge", () => mergeIssue(selected.issueId, selected.workspace))}
-                    disabled={selected.kind !== "done" || !selected.workspace || busyAction !== ""}
-                  >
-                    <GitBranch size={15} />Merge
-                  </button>
-                  <button
-                    onClick={() => runAction("cleanup", () => cleanupWorkspace(selected.issueId, selected.workspace))}
-                    disabled={selected.kind !== "merged" || !selected.workspace || busyAction !== ""}
-                  >
-                    <Trash2 size={15} />Cleanup
-                  </button>
-                  <small>Reviewer agents automatically claim Ready for Review; manual controls are here for intervention.</small>
+                  <small>Human Review waits for approval. Merging dispatches the landing agent through PR and the land skill.</small>
                 </div>
 
                 <dl className="details">
@@ -506,20 +490,20 @@ function ReviewWorkspace({
   onSelect: (key: string) => void;
   onAction: (name: string, action: () => Promise<void>) => void;
 }) {
-  const ready = items.filter((item) => stateToKind(item.state) === "ready-review").length;
-  const reviewing = items.filter((item) => stateToKind(item.state) === "reviewing").length;
+  const review = items.filter((item) => stateToKind(item.state) === "human-review").length;
+  const merging = items.filter((item) => stateToKind(item.state) === "merging").length;
 
   return (
     <section className="review-workspace">
       <div className="review-list panel">
         <div className="section-heading compact">
           <div>
-            <h2>Review Queue</h2>
-            <p>Ready and active review work, sorted by most recently touched.</p>
+            <h2>Human Review</h2>
+            <p>Approval and landing work, sorted by most recently touched.</p>
           </div>
           <div className="metric-row">
-            <Metric label="ready" value={ready} />
-            <Metric label="reviewing" value={reviewing} />
+            <Metric label="review" value={review} />
+            <Metric label="merging" value={merging} />
           </div>
         </div>
 
@@ -535,7 +519,7 @@ function ReviewWorkspace({
               >
                 <div className="card-topline">
                   <strong>{item.identifier}</strong>
-                  <StatusPill tone={stateToKind(item.state) === "reviewing" ? "violet" : "amber"} label={item.state} />
+                  <StatusPill tone={stateToKind(item.state) === "merging" ? "violet" : "amber"} label={item.state} />
                 </div>
                 <h3>{item.title}</h3>
                 <p>{item.packet.summary[0] ?? item.reviewerStatus}</p>
@@ -554,7 +538,7 @@ function ReviewWorkspace({
           <>
             <div className="review-titlebar">
               <div>
-                <p className="eyebrow">operator review</p>
+                <p className="eyebrow">human approval</p>
                 <h2>{selected.identifier}: {selected.title}</h2>
                 <p>{selected.reviewerStatus}</p>
               </div>
@@ -566,35 +550,29 @@ function ReviewWorkspace({
 
             <div className="review-action-bar">
               <button
-                onClick={() => onAction("start-review", () => moveIssue(selected.issueId, "Reviewing"))}
-                disabled={stateToKind(selected.state) !== "ready-review" || busyAction !== ""}
+                onClick={() => onAction("approve-merge", () => moveIssue(selected.issueId, "Merging"))}
+                disabled={stateToKind(selected.state) !== "human-review" || busyAction !== ""}
               >
-                <UserCheck size={15} />Start Review
+                <ShieldCheck size={15} />Approve for Merge
               </button>
               <button
-                onClick={() => onAction("approve", () => moveIssue(selected.issueId, "Done"))}
-                disabled={busyAction !== ""}
+                onClick={() => onAction("request-rework", () => moveIssue(selected.issueId, "Rework"))}
+                disabled={stateToKind(selected.state) !== "human-review" || busyAction !== ""}
               >
-                <CheckCircle2 size={15} />Approve
+                <MessageSquare size={15} />Request Rework
               </button>
               <button
-                onClick={() => onAction("request-revision", () => moveIssue(selected.issueId, "Todo"))}
+                onClick={() => onAction("cancel", () => moveIssue(selected.issueId, "Canceled"))}
                 disabled={busyAction !== ""}
               >
-                <MessageSquare size={15} />Request Revision
-              </button>
-              <button
-                onClick={() => onAction("block", () => moveIssue(selected.issueId, "Blocked"))}
-                disabled={busyAction !== ""}
-              >
-                <XCircle size={15} />Block
+                <XCircle size={15} />Cancel
               </button>
             </div>
 
             <div className="review-meta-grid">
               <ReviewFact icon={<GitBranch size={16} />} label="Branch" value={selected.branch ?? "-"} />
               <ReviewFact icon={<FolderOpen size={16} />} label="Workspace" value={selected.workspace || "-"} />
-              <ReviewFact icon={<Activity size={16} />} label="Reviewer Activity" value={selected.lastActivity} />
+              <ReviewFact icon={<Activity size={16} />} label="Last Activity" value={selected.lastActivity} />
               <ReviewFact icon={<ClipboardCheck size={16} />} label="Runtime" value={selected.completed?.status ?? selected.running?.last_event ?? "Linear queue"} />
             </div>
 
@@ -683,14 +661,6 @@ async function moveIssue(issueId: string, state: string): Promise<void> {
   await post(`/api/v1/issues/${encodeURIComponent(issueId)}/state`, { state });
 }
 
-async function mergeIssue(issueId: string, workspace: string): Promise<void> {
-  await post(`/api/v1/issues/${encodeURIComponent(issueId)}/merge`, { workspace_path: workspace, cleanup_workspace: false });
-}
-
-async function cleanupWorkspace(issueId: string, workspace: string): Promise<void> {
-  await post("/api/v1/workspaces/cleanup", { issue_id: issueId, workspace_path: workspace, force: false });
-}
-
 function buildReviewItems(board: BoardPayload | null, state: SymphonyState | null): ReviewItem[] {
   if (!board) {
     return [];
@@ -710,7 +680,7 @@ function buildReviewItems(board: BoardPayload | null, state: SymphonyState | nul
     .flatMap((lane) => lane.issues)
     .filter((issue) => {
       const kind = stateToKind(issue.state);
-      return kind === "ready-review" || kind === "reviewing";
+      return kind === "human-review" || kind === "merging";
     })
     .map((issue) => {
       const running = runningByIssue.get(issue.issue_id);
@@ -746,19 +716,23 @@ function buildReviewItems(board: BoardPayload | null, state: SymphonyState | nul
 }
 
 function reviewerStatus(issue: BoardIssue, running?: RunningItem, completed?: CompletedItem): string {
-  if (running && isReviewer(running)) {
-    return `Reviewer active: ${running.last_event ?? "working"}`;
+  if (running && stateToKind(running.state) === "merging") {
+    return `Landing active: ${running.last_event ?? "working"}`;
+  }
+
+  if (running) {
+    return `Agent active: ${running.last_event ?? "working"}`;
   }
 
   if (completed?.last_message) {
-    return `Last implementer activity: ${completed.last_event ?? completed.status}`;
+    return `Last agent activity: ${completed.last_event ?? completed.status}`;
   }
 
-  if (stateToKind(issue.state) === "reviewing") {
-    return "Marked Reviewing; no live reviewer session is currently reported.";
+  if (stateToKind(issue.state) === "merging") {
+    return "Marked Merging; waiting for the landing agent to finish.";
   }
 
-  return "Awaiting reviewer pickup.";
+  return "Waiting on human approval.";
 }
 
 function parseReviewPacket(text: string): ReviewPacket {
@@ -869,6 +843,11 @@ function extractUrls(text: string) {
   return Array.from(text.matchAll(/https?:\/\/\S+/g), (match) => match[0].replace(/[),.;]+$/, ""));
 }
 
+function firstPrUrl(packet: ReviewPacket) {
+  return [...packet.links, ...packet.artifact].find((item) =>
+    /github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+/i.test(item));
+}
+
 function dedupePacket(packet: ReviewPacket): ReviewPacket {
   const dedupe = (items: string[]) => Array.from(new Set(items.map((item) => item.trim()).filter(Boolean)));
   return {
@@ -912,28 +891,39 @@ function latestCompletedByIssue(state: SymphonyState | null): Map<string, Comple
 }
 
 function boardIssueCard(issue: BoardIssue, completed?: CompletedItem): WorkCard {
-  const kind = completed && isMergedCompletion(completed) ? "merged" : stateToKind(issue.state);
+  const kind = stateToKind(issue.state);
   const workspace = completed?.workspace_path ?? "";
+  const packet = parseReviewPacket([issue.description, completed?.last_message]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .join("\n\n"));
+  const prUrl = firstPrUrl(packet);
+  const validation = packet.validation[0] ?? "-";
+  const workpad = packet.raw.includes("## Codex Workpad") ? "found" : "-";
+  const lastRun = completed ? `${completed.status} at ${formatDate(completed.completed_at)}` : "-";
   return {
     key: `board:${issue.issue_id}`,
     kind,
     issueId: issue.issue_id,
     identifier: issue.issue_identifier,
     title: issue.title,
-    subtitle: kind === "merged" ? completed?.cleanup_outcome ?? "merged" : issue.labels.length > 0 ? issue.labels.join(", ") : issue.state,
-    worker: kind === "ready-review" || kind === "reviewing" ? "reviewer" : "linear",
+    subtitle: issue.labels.length > 0 ? issue.labels.join(", ") : issue.state,
+    worker: kind === "human-review" ? "human" : kind === "merging" ? "land" : kind === "rework" ? "agent" : "linear",
     workspace,
     primaryTime: issue.updated_at ? formatTime(issue.updated_at) : "-",
     tokens: completed?.tokens.total_tokens ?? 0,
     message: completed?.last_message ?? issue.description ?? "",
     state: issue.state,
-    status: kind === "merged" ? completed?.status ?? "Merged" : "Linear",
+    status: completed?.status ?? "Linear",
     details: [
       ["State", issue.state || "-"],
       ["Priority", issue.priority?.toString() ?? "-"],
       ["Branch", issue.branch_name ?? "-"],
+      ["PR", prUrl ?? "-"],
+      ["Workpad", workpad],
       ["Workspace", workspace || "-"],
-      ["Merge", completed?.status === "Merged" ? "merged" : completed?.cleanup_outcome ?? "-"],
+      ["Last run", lastRun],
+      ["Validation", validation],
+      ["PR / Landing", completed?.status ?? completed?.cleanup_outcome ?? "-"],
       ["Labels", issue.labels.length > 0 ? issue.labels.join(", ") : "-"],
       ["Updated", issue.updated_at ? formatDate(issue.updated_at) : "-"],
       ["Created", issue.created_at ? formatDate(issue.created_at) : "-"]
@@ -947,31 +937,36 @@ function stateToKind(state: string): CardKind {
     return "todo";
   }
   if (normalized === "running" || normalized === "in progress") {
-    return "running";
+    return "in-progress";
   }
-  if (normalized === "ready for review" || normalized === "in review") {
-    return "ready-review";
+  if (normalized === "human review") {
+    return "human-review";
   }
-  if (normalized === "reviewing") {
-    return "reviewing";
+  if (normalized === "merging") {
+    return "merging";
   }
-  if (normalized === "blocked" || normalized === "canceled" || normalized === "cancelled") {
-    return "blocked";
+  if (normalized === "rework" || normalized === "blocked") {
+    return "rework";
   }
-  if (normalized === "merged") {
-    return "merged";
+  if (["done", "closed", "canceled", "cancelled", "duplicate", "merged"].includes(normalized)) {
+    return "done";
   }
-  return "done";
+  return "rework";
 }
 
 function runningCard(item: RunningItem): WorkCard {
-  const reviewer = isReviewer(item);
+  const kind = stateToKind(item.state);
+  const title = kind === "merging"
+    ? "Landing in progress"
+    : kind === "rework"
+      ? "Rework in progress"
+      : "Implementation in progress";
   return {
     key: `running:${item.issue_id}`,
-    kind: reviewer ? "reviewing" : "running",
+    kind: kind === "done" || kind === "human-review" || kind === "todo" ? "in-progress" : kind,
     issueId: item.issue_id,
     identifier: item.issue_identifier,
-    title: reviewer ? "Neutral review in progress" : "Implementation in progress",
+    title,
     subtitle: item.last_event ?? item.state,
     worker: item.worker_host ?? "worker",
     workspace: item.workspace_path ?? "",
@@ -994,7 +989,7 @@ function runningCard(item: RunningItem): WorkCard {
 function retryCard(item: RetryItem): WorkCard {
   return {
     key: `retry:${item.issue_id}`,
-    kind: "blocked",
+    kind: "rework",
     issueId: item.issue_id,
     identifier: item.issue_identifier,
     title: `Retry attempt ${item.attempt}`,
@@ -1004,7 +999,7 @@ function retryCard(item: RetryItem): WorkCard {
     primaryTime: formatTime(item.due_at),
     tokens: 0,
     message: item.error ?? "",
-    state: "Blocked",
+    state: "Rework",
     status: "retrying",
     details: [
       ["Attempt", String(item.attempt)],
@@ -1017,44 +1012,20 @@ function retryCard(item: RetryItem): WorkCard {
 }
 
 function completedCard(item: CompletedItem): WorkCard {
-  if (isMergedCompletion(item)) {
-    return {
-      key: `completed:${item.issue_id}`,
-      kind: "merged",
-      issueId: item.issue_id,
-      identifier: item.issue_identifier,
-      title: "Merged into checkout",
-      subtitle: item.cleanup_outcome || item.status,
-      worker: item.worker_host ?? "operator",
-      workspace: item.workspace_path ?? "",
-      primaryTime: formatTime(item.completed_at),
-      tokens: item.tokens.total_tokens,
-      message: item.last_message ?? "",
-      state: item.state,
-      status: item.status,
-      details: [
-        ["State", item.state || "-"],
-        ["Status", item.status || "-"],
-        ["Completed", formatDate(item.completed_at)],
-        ["Cleanup", item.cleanup_outcome || "-"],
-        ["Workspace", item.workspace_path ?? "-"]
-      ]
-    };
-  }
-
-  const status = `${item.status} ${item.state} ${item.error ?? ""}`.toLowerCase();
-  const blocked = status.includes("fail")
-    || status.includes("block")
-    || status.includes("cancel")
-    || status.includes("error");
-  const ready = item.state.toLowerCase().includes("review") || item.last_message?.toLowerCase().includes("review") || item.status.toLowerCase() === "completed";
-  const kind: CardKind = blocked ? "blocked" : ready ? "ready-review" : "done";
+  const kind = stateToKind(item.state);
+  const title = kind === "human-review"
+    ? "Ready for human review"
+    : kind === "merging"
+      ? "Landing run completed"
+      : kind === "rework"
+        ? "Needs rework"
+        : item.status;
   return {
     key: `completed:${item.issue_id}`,
     kind,
     issueId: item.issue_id,
     identifier: item.issue_identifier,
-    title: kind === "ready-review" ? "Ready for neutral review" : item.status,
+    title,
     subtitle: item.state || item.last_event || item.status,
     worker: item.worker_host ?? "worker",
     workspace: item.workspace_path ?? "",
@@ -1074,19 +1045,6 @@ function completedCard(item: CompletedItem): WorkCard {
       ["Workspace", item.workspace_path ?? "-"]
     ]
   };
-}
-
-function isMergedCompletion(item: CompletedItem): boolean {
-  return item.status.toLowerCase() === "merged"
-    || item.status.toLowerCase() === "cleaned"
-    || item.cleanup_outcome.toLowerCase().includes("merged")
-    || item.cleanup_outcome.toLowerCase().includes("cleaned")
-    || item.state.toLowerCase() === "merged";
-}
-
-function isReviewer(item: RunningItem): boolean {
-  const kind = stateToKind(item.state);
-  return kind === "ready-review" || kind === "reviewing";
 }
 
 function buildTimeline(selected: WorkCard | undefined, state: SymphonyState | null) {

@@ -21,6 +21,11 @@ public interface ITrackerClient
         JsonObject variables,
         CancellationToken cancellationToken);
 
+    Task ValidateWorkflowStatesAsync(
+        IReadOnlyList<string> requiredStates,
+        IReadOnlyList<IReadOnlyList<string>> requiredAlternatives,
+        CancellationToken cancellationToken);
+
     Task CreateCommentAsync(string issueId, string body, CancellationToken cancellationToken);
 
     Task UpdateIssueStateAsync(string issueId, string stateName, CancellationToken cancellationToken);

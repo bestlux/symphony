@@ -115,8 +115,8 @@ if (-not $SkipWeb) {
 }
 
 if (-not $SkipDotnet) {
-    $buildArgs = @(
-        "build",
+    $dotnetArgs = @(
+        "test",
         $solution,
         "-m:1",
         "-p:NuGetAudit=false",
@@ -129,12 +129,12 @@ if (-not $SkipDotnet) {
     if (Test-ServiceRunningFromRepo) {
         Remove-InRepoDirectory $tempBuild
         New-Item -ItemType Directory -Force -Path $tempBuild | Out-Null
-        $buildArgs += "-p:OutDir=$tempBuild\"
+        $dotnetArgs += "-p:OutDir=$tempBuild\"
     }
 
-    & dotnet @buildArgs
+    & dotnet @dotnetArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "dotnet build failed with exit code $LASTEXITCODE"
+        throw "dotnet test failed with exit code $LASTEXITCODE"
     }
 }
 

@@ -39,7 +39,8 @@ description:
 8. Write a body that includes:
    - Summary of key changes (what changed).
    - Rationale and trade-offs (why it changed).
-   - Tests or validation run (or explicit note if not run).
+   - Tests or validation run, usually `.\scripts\validate-symphony.ps1`
+     and any focused `dotnet test` command relevant to the change.
 9. Append a `Co-authored-by` trailer for Codex using `Codex <codex@openai.com>`
    unless the user explicitly requests a different identity.
 10. Wrap body lines at 72 characters.
@@ -69,7 +70,7 @@ Rationale:
 - <why>
 
 Tests:
-- <command or "not run (reason)">
+- <command/result or "not run (reason)">
 
 Co-authored-by: Codex <codex@openai.com>
 ```

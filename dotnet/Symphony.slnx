@@ -8,4 +8,7 @@
     <Project Path="src/Symphony.Service/Symphony.Service.csproj" />
     <Project Path="src/Symphony.Workspaces/Symphony.Workspaces.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Symphony.Tests/Symphony.Tests.csproj" />
+  </Folder>
 </Solution>

@@ -5,8 +5,8 @@ namespace Symphony.Core.Configuration;
 
 public sealed partial class ConfigResolver
 {
-    private static readonly string[] DefaultActiveStates = ["Todo", "In Progress"];
-    private static readonly string[] DefaultDispatchStates = ["Todo"];
+    private static readonly string[] DefaultActiveStates = ["Todo", "In Progress", "Merging", "Rework"];
+    private static readonly string[] DefaultDispatchStates = ["Todo", "In Progress", "Merging", "Rework"];
     private static readonly string[] DefaultTerminalStates = ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"];
 
     private static readonly IReadOnlyDictionary<string, object?> DefaultApprovalPolicy =

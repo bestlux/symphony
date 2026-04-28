@@ -5,8 +5,8 @@ public sealed record LinearOptions
     public string Endpoint { get; init; } = "https://api.linear.app/graphql";
     public string? ApiKey { get; init; }
     public string? ProjectSlug { get; init; }
-    public IReadOnlyList<string> ActiveStates { get; init; } = ["Todo", "In Progress"];
-    public IReadOnlyList<string> DispatchStates { get; init; } = ["Todo"];
+    public IReadOnlyList<string> ActiveStates { get; init; } = ["Todo", "In Progress", "Merging", "Rework"];
+    public IReadOnlyList<string> DispatchStates { get; init; } = ["Todo", "In Progress", "Merging", "Rework"];
     public IReadOnlyList<string> TerminalStates { get; init; } = ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"];
     public string? Assignee { get; init; }
 

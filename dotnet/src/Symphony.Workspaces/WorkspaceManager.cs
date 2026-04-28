@@ -73,7 +73,7 @@ public sealed class WorkspaceManager : IWorkspaceCoordinator
         CancellationToken cancellationToken)
     {
         return ForConfig(config).CreateForIssueAsync(
-            issue.Identifier,
+            issue,
             workerHost,
             cancellationToken,
             RequireCleanWorkspaceForIssue(issue));
@@ -85,7 +85,7 @@ public sealed class WorkspaceManager : IWorkspaceCoordinator
         SymphonyConfig config,
         CancellationToken cancellationToken)
     {
-        return ForConfig(config).RunBeforeRunHookAsync(workspace, cancellationToken);
+        return ForConfig(config).RunBeforeRunHookAsync(workspace, issue, cancellationToken);
     }
 
     public Task RunAfterRunHookAsync(
@@ -94,7 +94,44 @@ public sealed class WorkspaceManager : IWorkspaceCoordinator
         SymphonyConfig config,
         CancellationToken cancellationToken)
     {
-        return ForConfig(config).RunAfterRunHookBestEffortAsync(workspace, cancellationToken);
+        return ForConfig(config).RunAfterRunHookBestEffortAsync(workspace, issue, cancellationToken);
+    }
+
+    private async Task<WorkspaceInfo> CreateForIssueAsync(
+        Issue issue,
+        string? workerHost = null,
+        CancellationToken cancellationToken = default,
+        bool requireCleanWorkspace = true)
+    {
+        var options = _optionsFactory();
+        var safeId = PathSafety.SafeIdentifier(issue.Identifier);
+        var environment = IssueHookEnvironment(issue);
+
+        if (string.IsNullOrWhiteSpace(workerHost))
+        {
+            var workspace = PathSafety.WorkspacePath(options.Root, safeId);
+            PathSafety.ValidateLocalWorkspacePath(options.Root, workspace);
+            var created = EnsureLocalWorkspace(workspace);
+
+            if (created)
+            {
+                await _hookRunner.RunLocalAsync("after_create", options.Hooks.AfterCreate, workspace, options.Hooks.TimeoutMs, cancellationToken, environment).ConfigureAwait(false);
+            }
+
+            return RequireCleanIfNeeded(InspectLocalWorkspace(workspace, safeId, created), requireCleanWorkspace);
+        }
+
+        var remoteWorkspace = PathSafety.RemoteWorkspacePath(options.Root, safeId);
+        PathSafety.ValidateRemoteWorkspacePath(remoteWorkspace);
+        var remote = await EnsureRemoteWorkspaceAsync(workerHost, remoteWorkspace, options.Hooks.TimeoutMs, cancellationToken).ConfigureAwait(false);
+        if (remote.CreatedNow)
+        {
+            await _hookRunner.RunRemoteAsync(_sshClient, workerHost, "after_create", options.Hooks.AfterCreate, remote.Path, options.Hooks.TimeoutMs, cancellationToken, environment).ConfigureAwait(false);
+        }
+
+        return RequireCleanIfNeeded(
+            await InspectRemoteWorkspaceAsync(workerHost, remote.Path, safeId, remote.CreatedNow, options.Hooks.TimeoutMs, cancellationToken).ConfigureAwait(false),
+            requireCleanWorkspace);
     }
 
     public Task RemoveForIssueAsync(
@@ -106,31 +143,43 @@ public sealed class WorkspaceManager : IWorkspaceCoordinator
         return ForConfig(config).RemoveIssueWorkspaceAsync(issue.Identifier, workerHost, cancellationToken);
     }
 
-    public async Task RunBeforeRunHookAsync(WorkspaceInfo workspace, CancellationToken cancellationToken = default)
+    public Task RunBeforeRunHookAsync(WorkspaceInfo workspace, CancellationToken cancellationToken = default)
+    {
+        return RunBeforeRunHookAsync(workspace, issue: null, cancellationToken);
+    }
+
+    private async Task RunBeforeRunHookAsync(WorkspaceInfo workspace, Issue? issue, CancellationToken cancellationToken = default)
     {
         var options = _optionsFactory();
+        var environment = IssueHookEnvironment(issue);
         if (string.IsNullOrWhiteSpace(workspace.WorkerHost))
         {
-            await _hookRunner.RunLocalAsync("before_run", options.Hooks.BeforeRun, workspace.Path, options.Hooks.TimeoutMs, cancellationToken).ConfigureAwait(false);
+            await _hookRunner.RunLocalAsync("before_run", options.Hooks.BeforeRun, workspace.Path, options.Hooks.TimeoutMs, cancellationToken, environment).ConfigureAwait(false);
         }
         else
         {
-            await _hookRunner.RunRemoteAsync(_sshClient, workspace.WorkerHost, "before_run", options.Hooks.BeforeRun, workspace.Path, options.Hooks.TimeoutMs, cancellationToken).ConfigureAwait(false);
+            await _hookRunner.RunRemoteAsync(_sshClient, workspace.WorkerHost, "before_run", options.Hooks.BeforeRun, workspace.Path, options.Hooks.TimeoutMs, cancellationToken, environment).ConfigureAwait(false);
         }
     }
 
-    public async Task RunAfterRunHookBestEffortAsync(WorkspaceInfo workspace, CancellationToken cancellationToken = default)
+    public Task RunAfterRunHookBestEffortAsync(WorkspaceInfo workspace, CancellationToken cancellationToken = default)
+    {
+        return RunAfterRunHookBestEffortAsync(workspace, issue: null, cancellationToken);
+    }
+
+    private async Task RunAfterRunHookBestEffortAsync(WorkspaceInfo workspace, Issue? issue, CancellationToken cancellationToken = default)
     {
         var options = _optionsFactory();
+        var environment = IssueHookEnvironment(issue);
         await IgnoreHookFailureAsync(async () =>
         {
             if (string.IsNullOrWhiteSpace(workspace.WorkerHost))
             {
-                await _hookRunner.RunLocalAsync("after_run", options.Hooks.AfterRun, workspace.Path, options.Hooks.TimeoutMs, cancellationToken).ConfigureAwait(false);
+                await _hookRunner.RunLocalAsync("after_run", options.Hooks.AfterRun, workspace.Path, options.Hooks.TimeoutMs, cancellationToken, environment).ConfigureAwait(false);
             }
             else
             {
-                await _hookRunner.RunRemoteAsync(_sshClient, workspace.WorkerHost, "after_run", options.Hooks.AfterRun, workspace.Path, options.Hooks.TimeoutMs, cancellationToken).ConfigureAwait(false);
+                await _hookRunner.RunRemoteAsync(_sshClient, workspace.WorkerHost, "after_run", options.Hooks.AfterRun, workspace.Path, options.Hooks.TimeoutMs, cancellationToken, environment).ConfigureAwait(false);
             }
         }).ConfigureAwait(false);
     }
@@ -317,6 +366,23 @@ public sealed class WorkspaceManager : IWorkspaceCoordinator
     private static bool RequireCleanWorkspaceForIssue(Issue issue)
     {
         return string.Equals(issue.State, "Todo", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IReadOnlyDictionary<string, string?>? IssueHookEnvironment(Issue? issue)
+    {
+        if (issue is null)
+        {
+            return null;
+        }
+
+        return new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["SYMPHONY_ISSUE_ID"] = issue.Id,
+            ["SYMPHONY_ISSUE_IDENTIFIER"] = issue.Identifier,
+            ["SYMPHONY_ISSUE_BRANCH"] = issue.BranchName,
+            ["SYMPHONY_ISSUE_STATE"] = issue.State,
+            ["SYMPHONY_BASE_BRANCH"] = "main"
+        };
     }
 
     private static WorkspaceInfo RequireCleanIfNeeded(WorkspaceInfo workspace, bool requireCleanWorkspace)

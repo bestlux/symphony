@@ -85,6 +85,40 @@ public sealed class LinearTrackerClient : ITrackerClient
         return _client.GraphQlAsync(query, variables, cancellationToken);
     }
 
+    public async Task ValidateWorkflowStatesAsync(
+        IReadOnlyList<string> requiredStates,
+        IReadOnlyList<IReadOnlyList<string>> requiredAlternatives,
+        CancellationToken cancellationToken = default)
+    {
+        var options = RequireOptions(projectRequired: true);
+        var variables = new JsonObject
+        {
+            ["projectSlug"] = options.ProjectSlug!,
+            ["first"] = LinearQueries.IssuePageSize
+        };
+
+        using var response = await _client.GraphQlAsync(LinearQueries.ProjectWorkflowStates, variables, cancellationToken).ConfigureAwait(false);
+        LinearIssueNormalizer.ThrowIfGraphQlErrors(response.RootElement);
+
+        var stateNames = WorkflowStateNames(response.RootElement);
+        var missing = requiredStates
+            .Where(required => !stateNames.Contains(required))
+            .ToList();
+
+        foreach (var alternatives in requiredAlternatives)
+        {
+            if (!alternatives.Any(stateNames.Contains))
+            {
+                missing.Add(string.Join(" or ", alternatives));
+            }
+        }
+
+        if (missing.Count > 0)
+        {
+            throw new LinearException($"Linear workflow for project '{options.ProjectSlug}' is missing required state(s): {string.Join(", ", missing)}.");
+        }
+    }
+
     public async Task CreateCommentAsync(string issueId, string body, CancellationToken cancellationToken = default)
     {
         var variables = new JsonObject
@@ -173,6 +207,41 @@ public sealed class LinearTrackerClient : ITrackerClient
                 throw new LinearException("Linear response indicated another page but did not include pageInfo.endCursor.");
             }
         }
+    }
+
+    private static HashSet<string> WorkflowStateNames(System.Text.Json.JsonElement root)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!TryGetElement(root, out var projects, "data", "projects", "nodes"))
+        {
+            return names;
+        }
+
+        foreach (var project in projects.EnumerateArray())
+        {
+            if (!TryGetElement(project, out var teams, "teams", "nodes"))
+            {
+                continue;
+            }
+
+            foreach (var team in teams.EnumerateArray())
+            {
+                if (!TryGetElement(team, out var states, "states", "nodes"))
+                {
+                    continue;
+                }
+
+                foreach (var state in states.EnumerateArray())
+                {
+                    if (TryGetString(state, out var name, "name") && !string.IsNullOrWhiteSpace(name))
+                    {
+                        names.Add(name);
+                    }
+                }
+            }
+        }
+
+        return names;
     }
 
     private async Task<IReadOnlySet<string>?> ResolveAssigneeFilterAsync(LinearOptions options, CancellationToken cancellationToken)

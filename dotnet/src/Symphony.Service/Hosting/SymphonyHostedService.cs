@@ -15,10 +15,10 @@ namespace Symphony.Service.Hosting;
 public sealed class SymphonyHostedService : BackgroundService
 {
     internal const string TodoState = "Todo";
-    internal const string RunningState = "Running";
-    internal const string ReadyForReviewState = "Ready for Review";
-    internal const string ReviewingState = "Reviewing";
-    internal const string BlockedState = "Blocked";
+    internal const string InProgressState = "In Progress";
+    internal const string HumanReviewState = "Human Review";
+    internal const string MergingState = "Merging";
+    internal const string ReworkState = "Rework";
     internal const string DoneState = "Done";
 
     private readonly CliOptions _options;
@@ -33,6 +33,7 @@ public sealed class SymphonyHostedService : BackgroundService
     private readonly DaemonControlService _controlService;
     private readonly ILogger<SymphonyHostedService> _logger;
     private readonly Dictionary<string, CancellationTokenSource> _running = new(StringComparer.Ordinal);
+    private string? _validatedWorkflowProjectSlug;
     private SymphonyOrchestrator? _orchestrator;
 
     public SymphonyHostedService(
@@ -104,7 +105,7 @@ public sealed class SymphonyHostedService : BackgroundService
     {
         try
         {
-            _configResolver.ValidateForDispatch(config);
+            await ValidateForDispatchAsync(config, cancellationToken).ConfigureAwait(false);
             var terminal = await _tracker.FetchIssuesByStatesAsync(config.Tracker.TerminalStates, cancellationToken).ConfigureAwait(false);
             foreach (var cleanup in _orchestrator!.PlanStartupCleanup(config, terminal))
             {
@@ -129,7 +130,7 @@ public sealed class SymphonyHostedService : BackgroundService
 
         try
         {
-            _configResolver.ValidateForDispatch(config);
+            await ValidateForDispatchAsync(config, stoppingToken).ConfigureAwait(false);
             await ReconcileAsync(config, stoppingToken).ConfigureAwait(false);
             await DispatchRetriesAsync(config, stoppingToken).ConfigureAwait(false);
 
@@ -201,7 +202,7 @@ public sealed class SymphonyHostedService : BackgroundService
                 var runKind = RunKind.FromIssueState(decision.Issue.State);
                 await MoveClaimedIssueToActiveStateAsync(decision, runKind, cts.Token).ConfigureAwait(false);
 
-                var prompt = BuildRunPrompt(decision.Issue, runKind, attempt);
+                var prompt = BuildRunPrompt(decision.Issue, attempt);
                 var result = await _agentRunner.RunAsync(
                     new AgentRunRequest(
                         decision.Issue,
@@ -209,7 +210,7 @@ public sealed class SymphonyHostedService : BackgroundService
                         prompt,
                         attempt,
                         decision.WorkerHost,
-                        runKind.ActiveState,
+                        runKind.ContinueWhileState,
                         (info, _) =>
                         {
                             _orchestrator!.IntegrateAgentRuntimeInfo(
@@ -234,13 +235,12 @@ public sealed class SymphonyHostedService : BackgroundService
                 if (result.Status == RunStatus.Succeeded)
                 {
                     _state.RecordCompletion(ToCompletedRunEntry(result, decision.Issue.Id, "retained"));
-                    await MoveCompletedIssueAsync(decision, runKind, result, cts.Token).ConfigureAwait(false);
                     _orchestrator!.MarkCompleted(decision.Issue.Id, scheduleContinuationCheck: true, config, DateTimeOffset.UtcNow);
                 }
                 else if (result.Status != RunStatus.Cancelled)
                 {
                     _state.RecordCompletion(ToCompletedRunEntry(result, decision.Issue.Id, "retained"));
-                    await MoveIssueStateAsync(decision.Issue, BlockedState, $"Agent run failed: {result.Error ?? "unknown error"}", cts.Token).ConfigureAwait(false);
+                    _state.RecordIssueStateTransition(decision.Issue.Identifier, $"Agent run failed and issue stayed in {decision.Issue.State}: {result.Error ?? "unknown error"}");
                     _orchestrator!.MarkFailed(decision.Issue.Id, config, DateTimeOffset.UtcNow, result.Error);
                 }
                 else
@@ -275,80 +275,34 @@ public sealed class SymphonyHostedService : BackgroundService
         }, CancellationToken.None);
     }
 
-    private string BuildRunPrompt(Issue issue, RunKind runKind, int? attempt)
-    {
-        var rendered = _promptRenderer.Render(_workflowStore.Current.PromptTemplate, issue, attempt);
-        if (!runKind.IsReviewer)
-        {
-            return rendered;
-        }
-
-        return $"""
-            You are the neutral Symphony reviewer agent for this issue.
-
-            Your job is to review the implementer work, inspect the workspace/repository state, run reasonable validation, fix review issues when the fix is clearly scoped, and produce a review packet.
-
-            If the work is acceptable after your review and any fixes, say so clearly in your final response.
-            If the work is not acceptable and you cannot fix it directly, move the Linear issue to Blocked, explain the blocker, and name the exact next action.
-
-            Review target:
-            {rendered}
-            """;
-    }
+    private string BuildRunPrompt(Issue issue, int? attempt) => _promptRenderer.Render(_workflowStore.Current.PromptTemplate, issue, attempt);
 
     private async Task MoveClaimedIssueToActiveStateAsync(DispatchDecision decision, RunKind runKind, CancellationToken cancellationToken)
     {
-        if (!runKind.ShouldMoveOnStart)
+        if (string.IsNullOrWhiteSpace(runKind.StartState))
         {
             return;
         }
 
-        await MoveIssueStateAsync(
+        var moved = await MoveIssueStateAsync(
             decision.Issue,
-            runKind.ActiveState,
-            $"Linear state moved from {decision.Issue.State} to {runKind.ActiveState} after dispatch",
+            runKind.StartState,
+            $"Linear state moved from {decision.Issue.State} to {runKind.StartState} after dispatch",
             cancellationToken).ConfigureAwait(false);
-        _orchestrator!.UpdateRunningIssueState(decision.Issue.Id, runKind.ActiveState);
+        if (!moved)
+        {
+            throw new InvalidOperationException($"Could not claim {decision.Issue.Identifier}; Linear did not move from {decision.Issue.State} to {runKind.StartState}.");
+        }
+
+        _orchestrator!.UpdateRunningIssueState(decision.Issue.Id, runKind.StartState);
         _state.SetFromCore(_orchestrator.Snapshot());
     }
 
-    private async Task MoveCompletedIssueAsync(DispatchDecision decision, RunKind runKind, RunResult result, CancellationToken cancellationToken)
-    {
-        var latestIssue = await FetchLatestIssueAsync(decision.Issue, cancellationToken).ConfigureAwait(false);
-        if (string.Equals(latestIssue.State, BlockedState, StringComparison.OrdinalIgnoreCase))
-        {
-            _state.RecordIssueStateTransition(latestIssue.Identifier, "Agent left issue Blocked; completion transition skipped");
-            return;
-        }
-
-        var targetState = runKind.IsReviewer ? DoneState : ReadyForReviewState;
-        var message = runKind.IsReviewer
-            ? "Reviewer agent approved work and moved issue to Done"
-            : "Implementer agent finished work and moved issue to Ready for Review";
-
-        await MoveIssueStateAsync(latestIssue, targetState, message, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task<Issue> FetchLatestIssueAsync(Issue fallback, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var latest = await _tracker.FetchIssueStatesByIdsAsync([fallback.Id], cancellationToken).ConfigureAwait(false);
-            return latest.FirstOrDefault() ?? fallback;
-        }
-        catch (Exception ex)
-            when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-        {
-            _logger.LogWarning(ex, "Could not refresh Linear issue {IssueIdentifier} before completion transition", fallback.Identifier);
-            return fallback;
-        }
-    }
-
-    private async Task MoveIssueStateAsync(Issue issue, string targetState, string message, CancellationToken cancellationToken)
+    private async Task<bool> MoveIssueStateAsync(Issue issue, string targetState, string message, CancellationToken cancellationToken)
     {
         if (string.Equals(issue.State, targetState, StringComparison.OrdinalIgnoreCase))
         {
-            return;
+            return true;
         }
 
         try
@@ -360,6 +314,7 @@ public sealed class SymphonyHostedService : BackgroundService
                 issue.Identifier,
                 issue.State,
                 targetState);
+            return true;
         }
         catch (Exception ex)
             when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -372,6 +327,7 @@ public sealed class SymphonyHostedService : BackgroundService
                 issue.Identifier,
                 issue.State,
                 targetState);
+            return false;
         }
     }
 
@@ -484,6 +440,26 @@ public sealed class SymphonyHostedService : BackgroundService
         return Task.CompletedTask;
     }
 
+    private async Task ValidateForDispatchAsync(SymphonyConfig config, CancellationToken cancellationToken)
+    {
+        _configResolver.ValidateForDispatch(config);
+        if (!string.Equals(config.Tracker.Kind, "linear", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (string.Equals(_validatedWorkflowProjectSlug, config.Tracker.ProjectSlug, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        await _tracker.ValidateWorkflowStatesAsync(
+            WorkflowStatePreflight.RequiredStates,
+            WorkflowStatePreflight.RequiredTerminalAlternatives,
+            cancellationToken).ConfigureAwait(false);
+        _validatedWorkflowProjectSlug = config.Tracker.ProjectSlug;
+    }
+
     private SymphonyConfig CurrentConfig() => _configResolver.Resolve(_workflowStore.ReloadIfChanged());
 
     private CompletedRunEntry ToCompletedRunEntry(RunResult result, string issueId, string cleanupOutcome)
@@ -517,18 +493,15 @@ public sealed class SymphonyHostedService : BackgroundService
     }
 }
 
-internal sealed record RunKind(bool IsReviewer, string ActiveState)
+internal sealed record RunKind(string? StartState, string ContinueWhileState)
 {
-    public bool ShouldMoveOnStart => !string.IsNullOrWhiteSpace(ActiveState);
-
     public static RunKind FromIssueState(string state)
     {
-        if (string.Equals(state, SymphonyHostedService.ReadyForReviewState, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(state, SymphonyHostedService.ReviewingState, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(state, SymphonyHostedService.TodoState, StringComparison.OrdinalIgnoreCase))
         {
-            return new RunKind(true, SymphonyHostedService.ReviewingState);
+            return new RunKind(SymphonyHostedService.InProgressState, SymphonyHostedService.InProgressState);
         }
 
-        return new RunKind(false, SymphonyHostedService.RunningState);
+        return new RunKind(null, state);
     }
 }
