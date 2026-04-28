@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using CoreSnapshot = Symphony.Abstractions.Runtime.RuntimeSnapshot;
 
 namespace Symphony.Service.Hosting;
@@ -8,10 +9,41 @@ public sealed class RuntimeStateStore
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
     private readonly ConcurrentDictionary<string, RunningSession> _running = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, RetryEntry> _retrying = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentQueue<CompletedRunEntry> _completed = new();
     private readonly ConcurrentQueue<string> _recentEvents = new();
     private PollingStatus _polling = new(false, null, null);
     private CodexTotals _totals = new(0, 0, 0, 0);
     private object? _rateLimits;
+    private string? _completedLedgerPath;
+
+    public void ConfigureCompletedLedger(string logsRoot)
+    {
+        Directory.CreateDirectory(logsRoot);
+        _completedLedgerPath = Path.Combine(logsRoot, "completed-runs.jsonl");
+
+        if (!File.Exists(_completedLedgerPath))
+        {
+            return;
+        }
+
+        foreach (var line in File.ReadLines(_completedLedgerPath).TakeLast(200))
+        {
+            try
+            {
+                var entry = JsonSerializer.Deserialize<CompletedRunEntry>(line);
+                if (entry is not null)
+                {
+                    _completed.Enqueue(entry);
+                }
+            }
+            catch
+            {
+                // A corrupt historical line should not prevent the operator from starting.
+            }
+        }
+
+        TrimCompleted();
+    }
 
     public void SetPolling(PollingStatus polling) => _polling = polling;
     public void UpsertRunning(RunningSession running)
@@ -25,6 +57,21 @@ public sealed class RuntimeStateStore
     public void RemoveRunning(string issueIdentifier) => _running.TryRemove(issueIdentifier, out _);
     public void UpsertRetry(RetryEntry retry) => _retrying[retry.IssueIdentifier] = retry;
     public void RemoveRetry(string issueIdentifier) => _retrying.TryRemove(issueIdentifier, out _);
+
+    public void RecordCompletion(CompletedRunEntry entry)
+    {
+        _completed.Enqueue(entry);
+        TrimCompleted();
+        AddRecentEvent($"{entry.CompletedAt:O} {entry.IssueIdentifier} completed status={entry.Status} workspace={entry.WorkspacePath}");
+
+        if (_completedLedgerPath is null)
+        {
+            return;
+        }
+
+        var json = JsonSerializer.Serialize(entry, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        File.AppendAllText(_completedLedgerPath, json + Environment.NewLine);
+    }
 
     public void AddTokens(long inputTokens, long outputTokens, long totalTokens)
     {
@@ -48,6 +95,7 @@ public sealed class RuntimeStateStore
         _polling,
         [.. _running.Values.OrderBy(r => r.IssueIdentifier)],
         [.. _retrying.Values.OrderBy(r => r.DueAt)],
+        [.. _completed.Reverse().Take(100).OrderByDescending(r => r.CompletedAt)],
         _totals with { SecondsRunning = (DateTimeOffset.UtcNow - _startedAt).TotalSeconds },
         _rateLimits);
 
@@ -106,6 +154,13 @@ public sealed class RuntimeStateStore
         {
         }
     }
+
+    private void TrimCompleted()
+    {
+        while (_completed.Count > 200 && _completed.TryDequeue(out _))
+        {
+        }
+    }
 }
 
 public sealed record RuntimeSnapshot(
@@ -113,6 +168,7 @@ public sealed record RuntimeSnapshot(
     PollingStatus Polling,
     IReadOnlyList<RunningSession> Running,
     IReadOnlyList<RetryEntry> Retrying,
+    IReadOnlyList<CompletedRunEntry> Completed,
     CodexTotals CodexTotals,
     object? RateLimits);
 
@@ -142,6 +198,27 @@ public sealed record RetryEntry(
     string? Error,
     string? WorkerHost,
     string? WorkspacePath);
+
+public sealed record CompletedRunEntry(
+    string IssueId,
+    string IssueIdentifier,
+    string State,
+    string Status,
+    string? SessionId,
+    string? ThreadId,
+    string? TurnId,
+    int TurnCount,
+    string? LastEvent,
+    string? LastMessage,
+    string? Error,
+    DateTimeOffset StartedAt,
+    DateTimeOffset CompletedAt,
+    long InputTokens,
+    long OutputTokens,
+    long TotalTokens,
+    string? WorkerHost,
+    string? WorkspacePath,
+    string CleanupOutcome);
 
 public sealed record CodexTotals(long InputTokens, long OutputTokens, long TotalTokens, double SecondsRunning);
 

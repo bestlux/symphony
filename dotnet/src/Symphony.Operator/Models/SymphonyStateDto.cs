@@ -16,6 +16,9 @@ public sealed record SymphonyStateDto
     [JsonPropertyName("retrying")]
     public IReadOnlyList<RetryDto> Retrying { get; init; } = [];
 
+    [JsonPropertyName("completed")]
+    public IReadOnlyList<CompletedRunDto> Completed { get; init; } = [];
+
     [JsonPropertyName("codex_totals")]
     public CodexTotalsDto CodexTotals { get; init; } = new();
 }
@@ -27,6 +30,9 @@ public sealed record CountsDto
 
     [JsonPropertyName("retrying")]
     public int Retrying { get; init; }
+
+    [JsonPropertyName("completed")]
+    public int Completed { get; init; }
 }
 
 public sealed record CodexTotalsDto

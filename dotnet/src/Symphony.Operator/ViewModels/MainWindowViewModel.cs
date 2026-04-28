@@ -16,6 +16,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private readonly CancellationTokenSource _disposeCts = new();
     private RunDto? _selectedRun;
     private RetryDto? _selectedRetry;
+    private CompletedRunDto? _selectedCompleted;
     private string _connectionStatus = "Connecting";
     private string _lastError = "";
     private string _pollingStatus = "";
@@ -42,6 +43,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public ObservableCollection<RunDto> Running { get; } = [];
     public ObservableCollection<RetryDto> Retrying { get; } = [];
+    public ObservableCollection<CompletedRunDto> Completed { get; } = [];
 
     public AsyncRelayCommand RefreshCommand { get; }
     public AsyncRelayCommand StopCommand { get; }
@@ -59,6 +61,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 if (value is not null)
                 {
                     SelectedRetry = null;
+                    SelectedCompleted = null;
                 }
 
                 RaiseSelectionDependentCommands();
@@ -76,6 +79,25 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 if (value is not null)
                 {
                     SelectedRun = null;
+                    SelectedCompleted = null;
+                }
+
+                RaiseSelectionDependentCommands();
+            }
+        }
+    }
+
+    public CompletedRunDto? SelectedCompleted
+    {
+        get => _selectedCompleted;
+        set
+        {
+            if (SetField(ref _selectedCompleted, value))
+            {
+                if (value is not null)
+                {
+                    SelectedRun = null;
+                    SelectedRetry = null;
                 }
 
                 RaiseSelectionDependentCommands();
@@ -113,10 +135,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         private set => SetField(ref _recentLogs, value);
     }
 
-    public string SelectedIdentifier => SelectedRun?.IssueIdentifier ?? SelectedRetry?.IssueIdentifier ?? "";
-    public string SelectedIssueId => SelectedRun?.IssueId ?? SelectedRetry?.IssueId ?? "";
-    public string SelectedWorkspace => SelectedRun?.WorkspacePath ?? SelectedRetry?.WorkspacePath ?? "";
-    public string SelectedLastMessage => SelectedRun?.LastMessage ?? SelectedRetry?.Error ?? "";
+    public string SelectedIdentifier => SelectedRun?.IssueIdentifier ?? SelectedRetry?.IssueIdentifier ?? SelectedCompleted?.IssueIdentifier ?? "";
+    public string SelectedIssueId => SelectedRun?.IssueId ?? SelectedRetry?.IssueId ?? SelectedCompleted?.IssueId ?? "";
+    public string SelectedWorkspace => SelectedRun?.WorkspacePath ?? SelectedRetry?.WorkspacePath ?? SelectedCompleted?.WorkspacePath ?? "";
+    public string SelectedLastMessage => SelectedRun?.LastMessage ?? SelectedRetry?.Error ?? SelectedCompletedSummary();
 
     public void Dispose()
     {
@@ -148,11 +170,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
             var selectedRunIssueId = SelectedRun?.IssueId;
             var selectedRetryIssueId = SelectedRetry?.IssueId;
+            var selectedCompletedIssueId = SelectedCompleted?.IssueId;
             Replace(Running, state.Running);
             Replace(Retrying, state.Retrying);
-            RestoreSelection(selectedRunIssueId, selectedRetryIssueId);
+            Replace(Completed, state.Completed);
+            RestoreSelection(selectedRunIssueId, selectedRetryIssueId, selectedCompletedIssueId);
             ConnectionStatus = health is null ? "Connected" : $"Connected - actions {(health.OperatorActionsAvailable ? "ready" : "not ready")}";
-            PollingStatus = $"Running {state.Counts.Running} | Retrying {state.Counts.Retrying} | Generated {state.GeneratedAt:T}";
+            PollingStatus = $"Running {state.Counts.Running} | Retrying {state.Counts.Retrying} | Completed {state.Counts.Completed} | Generated {state.GeneratedAt:T}";
             TokenSummary = $"Tokens {state.CodexTotals.TotalTokens:N0} in {state.CodexTotals.SecondsRunning:N0}s";
             RecentLogs = logs;
             LastError = "";
@@ -224,7 +248,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         OpenIssueCommand.RaiseCanExecuteChanged();
     }
 
-    private void RestoreSelection(string? selectedRunIssueId, string? selectedRetryIssueId)
+    private void RestoreSelection(string? selectedRunIssueId, string? selectedRetryIssueId, string? selectedCompletedIssueId)
     {
         if (!string.IsNullOrWhiteSpace(selectedRunIssueId))
         {
@@ -246,6 +270,16 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             }
         }
 
+        if (!string.IsNullOrWhiteSpace(selectedCompletedIssueId))
+        {
+            var completed = Completed.FirstOrDefault(item => item.IssueId == selectedCompletedIssueId);
+            if (completed is not null)
+            {
+                SelectedCompleted = completed;
+                return;
+            }
+        }
+
         if (SelectedRun is not null)
         {
             SelectedRun = null;
@@ -255,6 +289,32 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         {
             SelectedRetry = null;
         }
+
+        if (SelectedCompleted is not null)
+        {
+            SelectedCompleted = null;
+        }
+    }
+
+    private string SelectedCompletedSummary()
+    {
+        if (SelectedCompleted is null)
+        {
+            return "";
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            $"Status: {SelectedCompleted.Status}",
+            $"State: {SelectedCompleted.State}",
+            $"Completed: {SelectedCompleted.CompletedAt:G}",
+            $"Cleanup: {SelectedCompleted.CleanupOutcome}",
+            $"Session: {SelectedCompleted.SessionId ?? "-"}",
+            $"Thread: {SelectedCompleted.ThreadId ?? "-"}",
+            $"Turns: {SelectedCompleted.TurnCount}",
+            $"Tokens: {SelectedCompleted.Tokens.TotalTokens:N0}",
+            $"Last event: {SelectedCompleted.LastEvent ?? "-"}",
+            $"Message: {SelectedCompleted.LastMessage ?? SelectedCompleted.Error ?? "-"}");
     }
 
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> source)

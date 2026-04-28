@@ -57,6 +57,7 @@ public sealed class SymphonyHostedService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         Directory.CreateDirectory(_options.LogsRoot);
+        _state.ConfigureCompletedLedger(_options.LogsRoot);
 
         var config = CurrentConfig();
         _orchestrator = new SymphonyOrchestrator(config);
@@ -100,7 +101,9 @@ public sealed class SymphonyHostedService : BackgroundService
             var terminal = await _tracker.FetchIssuesByStatesAsync(config.Tracker.TerminalStates, cancellationToken).ConfigureAwait(false);
             foreach (var cleanup in _orchestrator!.PlanStartupCleanup(config, terminal))
             {
-                await _workspaces.RemoveForIssueAsync(cleanup.Issue, config, cleanup.WorkerHost, cancellationToken).ConfigureAwait(false);
+                _logger.LogWarning(
+                    "Startup terminal workspace cleanup retained for {IssueIdentifier}; review artifacts must be harvested before cleanup",
+                    cleanup.Issue.Identifier);
             }
         }
         catch (Exception ex)
@@ -212,16 +215,32 @@ public sealed class SymphonyHostedService : BackgroundService
 
                 if (result.Status == RunStatus.Succeeded)
                 {
+                    _state.RecordCompletion(ToCompletedRunEntry(result, decision.Issue.Id, "retained"));
                     _orchestrator!.MarkCompleted(decision.Issue.Id, scheduleContinuationCheck: true, config, DateTimeOffset.UtcNow);
                 }
                 else if (result.Status != RunStatus.Cancelled)
                 {
+                    _state.RecordCompletion(ToCompletedRunEntry(result, decision.Issue.Id, "retained"));
                     _orchestrator!.MarkFailed(decision.Issue.Id, config, DateTimeOffset.UtcNow, result.Error);
+                }
+                else
+                {
+                    _state.RecordCompletion(ToCompletedRunEntry(result, decision.Issue.Id, "retained"));
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Agent run failed issue={IssueIdentifier}", decision.Issue.Identifier);
+                _state.RecordCompletion(ToCompletedRunEntry(
+                    new RunResult(
+                        decision.Issue.Id,
+                        decision.Issue.Identifier,
+                        RunStatus.Failed,
+                        Error: ex.Message,
+                        StartedAt: DateTimeOffset.UtcNow,
+                        CompletedAt: DateTimeOffset.UtcNow),
+                    decision.Issue.Id,
+                    "retained"));
                 _orchestrator!.MarkFailed(decision.Issue.Id, config, DateTimeOffset.UtcNow, ex.Message);
             }
             finally
@@ -235,32 +254,32 @@ public sealed class SymphonyHostedService : BackgroundService
 
     private void StopRun(StopDecision stop, SymphonyConfig config, CancellationToken cancellationToken)
     {
+        var stoppedAt = DateTimeOffset.UtcNow;
+
         if (_running.Remove(stop.IssueId, out var cts))
         {
             cts.Cancel();
             cts.Dispose();
         }
 
+        _state.RecordCompletion(ToCompletedRunEntry(
+            new RunResult(
+                stop.IssueId,
+                stop.Identifier,
+                RunStatus.Cancelled,
+                Error: stop.Reason,
+                CompletedAt: stoppedAt),
+            stop.IssueId,
+            stop.CleanupWorkspace ? "retained" : "not requested"));
+
         if (!stop.CleanupWorkspace)
         {
             return;
         }
 
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await _workspaces.RemoveForIssueAsync(
-                    new Issue(stop.IssueId, stop.Identifier, "", null, null, "", null, null, [], [], null, null, null),
-                    config,
-                    stop.WorkerHost,
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Workspace cleanup failed for {IssueIdentifier}", stop.Identifier);
-            }
-        }, CancellationToken.None);
+        _logger.LogWarning(
+            "Workspace cleanup request retained for {IssueIdentifier}; review artifacts must be harvested before cleanup",
+            stop.Identifier);
     }
 
     private Task RefreshAsync(CancellationToken cancellationToken)
@@ -328,4 +347,30 @@ public sealed class SymphonyHostedService : BackgroundService
     }
 
     private SymphonyConfig CurrentConfig() => _configResolver.Resolve(_workflowStore.ReloadIfChanged());
+
+    private CompletedRunEntry ToCompletedRunEntry(RunResult result, string issueId, string cleanupOutcome)
+    {
+        var running = _orchestrator?.Snapshot().Running.FirstOrDefault(run => run.IssueId == issueId);
+
+        return new CompletedRunEntry(
+            result.IssueId,
+            result.IssueIdentifier,
+            running?.Issue?.State ?? "",
+            result.Status.ToString(),
+            result.SessionId ?? running?.SessionId,
+            result.ThreadId ?? running?.ThreadId,
+            result.TurnId ?? running?.TurnId,
+            result.TurnCount > 0 ? result.TurnCount : running?.TurnCount ?? 0,
+            running?.LastCodexEvent,
+            running?.LastCodexMessage,
+            result.Error,
+            result.StartedAt ?? running?.StartedAt ?? DateTimeOffset.UtcNow,
+            result.CompletedAt ?? DateTimeOffset.UtcNow,
+            running?.CodexInputTokens ?? 0,
+            running?.CodexOutputTokens ?? 0,
+            running?.CodexTotalTokens ?? 0,
+            running?.WorkerHost,
+            running?.WorkspacePath,
+            cleanupOutcome);
+    }
 }

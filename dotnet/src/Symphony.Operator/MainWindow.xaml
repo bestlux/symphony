@@ -56,7 +56,9 @@
 
             <Grid Grid.Column="0">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="1.1*"/>
+                    <RowDefinition Height="12"/>
+                    <RowDefinition Height="0.8*"/>
                     <RowDefinition Height="12"/>
                     <RowDefinition Height="0.8*"/>
                 </Grid.RowDefinitions>
@@ -83,6 +85,19 @@
                             <DataGridTextColumn Header="Due" Binding="{Binding DueAt, StringFormat=t}" Width="90"/>
                             <DataGridTextColumn Header="Worker" Binding="{Binding WorkerHost}" Width="90"/>
                             <DataGridTextColumn Header="Error" Binding="{Binding Error}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </GroupBox>
+
+                <GroupBox Grid.Row="4" Header="Completed">
+                    <DataGrid ItemsSource="{Binding Completed}" SelectedItem="{Binding SelectedCompleted, Mode=TwoWay}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Issue" Binding="{Binding IssueIdentifier}" Width="110"/>
+                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="90"/>
+                            <DataGridTextColumn Header="State" Binding="{Binding State}" Width="110"/>
+                            <DataGridTextColumn Header="Completed" Binding="{Binding CompletedAt, StringFormat=t}" Width="90"/>
+                            <DataGridTextColumn Header="Cleanup" Binding="{Binding CleanupOutcome}" Width="90"/>
+                            <DataGridTextColumn Header="Workspace" Binding="{Binding WorkspacePath}" Width="*"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </GroupBox>

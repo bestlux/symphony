@@ -16,7 +16,7 @@ public static class HttpApi
                 <body>
                 <h1>Symphony Status</h1>
                 <p>Generated at: {snapshot.GeneratedAt:O}</p>
-                <p>Running: {snapshot.Running.Count} Retrying: {snapshot.Retrying.Count}</p>
+                <p>Running: {snapshot.Running.Count} Retrying: {snapshot.Retrying.Count} Completed: {snapshot.Completed.Count}</p>
                 <p>Total tokens: {snapshot.CodexTotals.TotalTokens}</p>
                 <p><a href="/api/v1/state">JSON state</a></p>
                 </body>
@@ -35,6 +35,7 @@ public static class HttpApi
                 generated_at = snapshot.GeneratedAt,
                 running = snapshot.Running.Count,
                 retrying = snapshot.Retrying.Count,
+                completed = snapshot.Completed.Count,
                 operator_actions_available = control.IsBound
             });
         });
@@ -44,8 +45,9 @@ public static class HttpApi
             var snapshot = state.Snapshot();
             var running = snapshot.Running.FirstOrDefault(entry => entry.IssueIdentifier.Equals(issue_identifier, StringComparison.OrdinalIgnoreCase));
             var retry = snapshot.Retrying.FirstOrDefault(entry => entry.IssueIdentifier.Equals(issue_identifier, StringComparison.OrdinalIgnoreCase));
+            var completed = snapshot.Completed.FirstOrDefault(entry => entry.IssueIdentifier.Equals(issue_identifier, StringComparison.OrdinalIgnoreCase));
 
-            if (running is null && retry is null)
+            if (running is null && retry is null && completed is null)
             {
                 return Results.NotFound(new { error = new { code = "issue_not_found", message = "Issue not found" } });
             }
@@ -53,12 +55,13 @@ public static class HttpApi
             return Results.Json(new
             {
                 issue_identifier,
-                issue_id = running?.IssueId ?? retry?.IssueId,
-                status = running is not null ? "running" : "retrying",
-                workspace = new { path = running?.WorkspacePath ?? retry?.WorkspacePath, host = running?.WorkerHost ?? retry?.WorkerHost },
+                issue_id = running?.IssueId ?? retry?.IssueId ?? completed?.IssueId,
+                status = running is not null ? "running" : retry is not null ? "retrying" : "completed",
+                workspace = new { path = running?.WorkspacePath ?? retry?.WorkspacePath ?? completed?.WorkspacePath, host = running?.WorkerHost ?? retry?.WorkerHost ?? completed?.WorkerHost },
                 attempts = new { restart_count = Math.Max((retry?.Attempt ?? 0) - 1, 0), current_retry_attempt = retry?.Attempt ?? 0 },
                 running = running is null ? null : RunningPayload(running),
                 retry = retry is null ? null : RetryPayload(retry),
+                completed = completed is null ? null : CompletedPayload(completed),
                 logs = new { codex_session_logs = Array.Empty<object>() },
                 recent_events = running?.LastEventAt is null
                     ? []
@@ -117,9 +120,10 @@ public static class HttpApi
     private static object ToStatePayload(RuntimeSnapshot snapshot) => new
     {
         generated_at = snapshot.GeneratedAt,
-        counts = new { running = snapshot.Running.Count, retrying = snapshot.Retrying.Count },
+        counts = new { running = snapshot.Running.Count, retrying = snapshot.Retrying.Count, completed = snapshot.Completed.Count },
         running = snapshot.Running.Select(RunningPayload),
         retrying = snapshot.Retrying.Select(RetryPayload),
+        completed = snapshot.Completed.Select(CompletedPayload),
         codex_totals = new
         {
             input_tokens = snapshot.CodexTotals.InputTokens,
@@ -160,6 +164,32 @@ public static class HttpApi
         error = entry.Error,
         worker_host = entry.WorkerHost,
         workspace_path = entry.WorkspacePath
+    };
+
+    private static object CompletedPayload(CompletedRunEntry entry) => new
+    {
+        issue_id = entry.IssueId,
+        issue_identifier = entry.IssueIdentifier,
+        state = entry.State,
+        status = entry.Status,
+        worker_host = entry.WorkerHost,
+        workspace_path = entry.WorkspacePath,
+        session_id = entry.SessionId,
+        thread_id = entry.ThreadId,
+        turn_id = entry.TurnId,
+        turn_count = entry.TurnCount,
+        last_event = entry.LastEvent,
+        last_message = entry.LastMessage,
+        error = entry.Error,
+        started_at = entry.StartedAt,
+        completed_at = entry.CompletedAt,
+        cleanup_outcome = entry.CleanupOutcome,
+        tokens = new
+        {
+            input_tokens = entry.InputTokens,
+            output_tokens = entry.OutputTokens,
+            total_tokens = entry.TotalTokens
+        }
     };
 }
 
