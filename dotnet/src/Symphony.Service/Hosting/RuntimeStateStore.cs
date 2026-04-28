@@ -12,6 +12,7 @@ public sealed class RuntimeStateStore
     private readonly ConcurrentDictionary<string, RetryEntry> _retrying = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentQueue<CompletedRunEntry> _completed = new();
     private readonly ConcurrentQueue<string> _recentEvents = new();
+    private readonly ConcurrentDictionary<string, string> _lastRecentEventByIssue = new(StringComparer.OrdinalIgnoreCase);
     private PollingStatus _polling = new(false, null, null);
     private CodexTotals _totals = new(0, 0, 0, 0);
     private object? _rateLimits;
@@ -52,7 +53,10 @@ public sealed class RuntimeStateStore
         _running[running.IssueIdentifier] = running;
         if (!string.IsNullOrWhiteSpace(running.LastEvent))
         {
-            AddRecentEvent($"{DateTimeOffset.UtcNow:O} {running.IssueIdentifier} {running.LastEvent} {running.LastMessage}");
+            AddRecentEvent(
+                running.IssueIdentifier,
+                $"{running.LastEvent} {running.LastEventAt:O} {running.LastMessage}",
+                $"{DateTimeOffset.UtcNow:O} {running.IssueIdentifier} {running.LastEvent} {running.LastMessage}");
         }
     }
     public void RemoveRunning(string issueIdentifier) => _running.TryRemove(issueIdentifier, out _);
@@ -61,14 +65,17 @@ public sealed class RuntimeStateStore
 
     public void RecordIssueStateTransition(string issueIdentifier, string message)
     {
-        AddRecentEvent($"{DateTimeOffset.UtcNow:O} {issueIdentifier} {message}");
+        AddRecentEvent(issueIdentifier, message, $"{DateTimeOffset.UtcNow:O} {issueIdentifier} {message}");
     }
 
     public void RecordCompletion(CompletedRunEntry entry)
     {
         _completed.Enqueue(entry);
         TrimCompleted();
-        AddRecentEvent($"{entry.CompletedAt:O} {entry.IssueIdentifier} completed status={entry.Status} workspace={entry.WorkspacePath}");
+        AddRecentEvent(
+            entry.IssueIdentifier,
+            $"completed {entry.CompletedAt:O} {entry.Status} {entry.WorkspacePath}",
+            $"{entry.CompletedAt:O} {entry.IssueIdentifier} completed status={entry.Status} workspace={entry.WorkspacePath}");
 
         if (_completedLedgerPath is null)
         {
@@ -153,8 +160,20 @@ public sealed class RuntimeStateStore
         _rateLimits = snapshot.CodexRateLimits;
     }
 
-    private void AddRecentEvent(string line)
+    private void AddRecentEvent(string issueIdentifier, string eventKey, string line)
     {
+        if (!string.IsNullOrWhiteSpace(issueIdentifier)
+            && _lastRecentEventByIssue.TryGetValue(issueIdentifier, out var previous)
+            && string.Equals(previous, eventKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(issueIdentifier))
+        {
+            _lastRecentEventByIssue[issueIdentifier] = eventKey;
+        }
+
         _recentEvents.Enqueue(line);
         while (_recentEvents.Count > 500 && _recentEvents.TryDequeue(out _))
         {

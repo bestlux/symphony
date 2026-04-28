@@ -33,7 +33,20 @@ public sealed class LogFileWriterProvider : ILoggerProvider
         }
 
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Information;
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            if (logLevel < LogLevel.Information)
+            {
+                return false;
+            }
+
+            if (IsNoisyFrameworkCategory(_categoryName) && logLevel < LogLevel.Warning)
+            {
+                return false;
+            }
+
+            return true;
+        }
 
         public void Log<TState>(
             LogLevel logLevel,
@@ -57,6 +70,13 @@ public sealed class LogFileWriterProvider : ILoggerProvider
             {
                 File.AppendAllText(_logFile, line + Environment.NewLine);
             }
+        }
+
+        private static bool IsNoisyFrameworkCategory(string categoryName)
+        {
+            return categoryName.StartsWith("Microsoft.AspNetCore.", StringComparison.Ordinal)
+                || categoryName.StartsWith("Microsoft.Hosting.", StringComparison.Ordinal)
+                || categoryName.StartsWith("System.Net.Http.HttpClient.", StringComparison.Ordinal);
         }
     }
 }

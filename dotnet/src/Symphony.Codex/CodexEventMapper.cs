@@ -14,11 +14,12 @@ public static class CodexEventMapper
         string? threadId = null,
         string? turnId = null)
     {
+        var mappedEventName = MapEventName(eventName, payload);
         var usage = FindObject(payload, "usage");
-        var rateLimits = payload?["rateLimits"] ?? payload?["rate_limits"];
+        var rateLimits = FindNode(payload, "rateLimits", "rate_limits");
 
         return new CodexRuntimeUpdate(
-            eventName,
+            mappedEventName,
             DateTimeOffset.UtcNow,
             sessionId,
             threadId,
@@ -31,6 +32,23 @@ public static class CodexEventMapper
             Token(usage, "total_tokens", "totalTokens", "total"),
             rateLimits,
             payload);
+    }
+
+    private static string MapEventName(string eventName, JsonObject? payload)
+    {
+        if (!string.Equals(eventName, "notification", StringComparison.Ordinal))
+        {
+            return eventName;
+        }
+
+        if (payload?["method"] is JsonValue methodValue
+            && methodValue.TryGetValue<string>(out var method)
+            && !string.IsNullOrWhiteSpace(method))
+        {
+            return method;
+        }
+
+        return eventName;
     }
 
     private static JsonObject? FindObject(JsonObject? payload, string propertyName)
@@ -48,6 +66,29 @@ public static class CodexEventMapper
         if (payload["params"] is JsonObject parameters && parameters[propertyName] is JsonObject nested)
         {
             return nested;
+        }
+
+        return null;
+    }
+
+    private static JsonNode? FindNode(JsonObject? payload, params string[] propertyNames)
+    {
+        if (payload is null)
+        {
+            return null;
+        }
+
+        foreach (var propertyName in propertyNames)
+        {
+            if (payload[propertyName] is { } direct)
+            {
+                return direct;
+            }
+
+            if (payload["params"] is JsonObject parameters && parameters[propertyName] is { } nested)
+            {
+                return nested;
+            }
         }
 
         return null;

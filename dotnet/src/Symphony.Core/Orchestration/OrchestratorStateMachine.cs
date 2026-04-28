@@ -323,15 +323,16 @@ public sealed class OrchestratorStateMachine
             state.CodexRateLimits = update.RateLimits;
         }
 
+        var meaningfulActivity = IsMeaningfulActivity(update);
         state.Running[issueId] = running with
         {
             SessionId = update.SessionId ?? ComposeSessionId(update.ThreadId, update.TurnId) ?? running.SessionId,
             ThreadId = update.ThreadId ?? running.ThreadId,
             TurnId = update.TurnId ?? running.TurnId,
             CodexAppServerPid = update.CodexAppServerPid ?? running.CodexAppServerPid,
-            LastCodexEvent = update.Event,
-            LastCodexTimestamp = update.Timestamp,
-            LastCodexMessage = update.Message,
+            LastCodexEvent = meaningfulActivity ? update.Event : running.LastCodexEvent,
+            LastCodexTimestamp = meaningfulActivity ? update.Timestamp : running.LastCodexTimestamp,
+            LastCodexMessage = meaningfulActivity ? update.Message : running.LastCodexMessage,
             CodexInputTokens = inputTokens,
             CodexOutputTokens = outputTokens,
             CodexTotalTokens = totalTokens,
@@ -506,6 +507,24 @@ public sealed class OrchestratorStateMachine
         return string.IsNullOrWhiteSpace(threadId) || string.IsNullOrWhiteSpace(turnId)
             ? null
             : $"{threadId}-{turnId}";
+    }
+
+    private static bool IsMeaningfulActivity(CodexRuntimeUpdate update)
+    {
+        if (update.TokenUsage is not null)
+        {
+            return true;
+        }
+
+        if (string.Equals(update.Event, "stderr", StringComparison.Ordinal)
+            && update.Message?.Contains("ignoring interface.defaultPrompt", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return false;
+        }
+
+        return update.Event is not "account/rateLimits/updated"
+            and not "item/started"
+            and not "item/completed";
     }
 
     private static RunningSessionSnapshot ToSnapshot(RunningIssue running)
