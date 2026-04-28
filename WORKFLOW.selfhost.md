@@ -18,18 +18,44 @@ hooks:
   timeout_ms: 300000
   after_create: |
     $source = "D:\Source\symphony"
-    git clone $source .
+    $baseBranch = if ([string]::IsNullOrWhiteSpace($env:SYMPHONY_BASE_BRANCH)) { "main" } else { $env:SYMPHONY_BASE_BRANCH }
+
+    git clone --no-local --branch $baseBranch --single-branch $source .
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    robocopy $source . /E /XD .git .vs bin obj log /XF symphony.secrets *.user *.suo
-    if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
+    git fetch origin $baseBranch
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    git reset --hard "origin/$baseBranch"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    git clean -ffdx
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    $status = git status --porcelain=v1
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    if ($status) {
+      Write-Error "Workspace is dirty before dispatch:`n$status"
+      exit 1
+    }
 
     $config = "C:\Users\iomancer\.codex\config.toml"
+    $configDir = Split-Path -Parent $config
+    if (-not (Test-Path -LiteralPath $configDir)) {
+      New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+    }
+    if (-not (Test-Path -LiteralPath $config)) {
+      New-Item -ItemType File -Path $config -Force | Out-Null
+    }
+
     $workspace = (Get-Location).Path
-    $header = "[projects.'$($workspace.ToLowerInvariant())']"
-    $trustBlock = "`n$header`ntrust_level = `"trusted`"`n"
-    if (-not (Select-String -LiteralPath $config -SimpleMatch $header -Quiet)) {
-      Add-Content -LiteralPath $config -Value $trustBlock
+    $trustedProjects = @("D:\Source", "D:\Source\symphony-workspaces", $workspace)
+    foreach ($project in $trustedProjects) {
+      $header = "[projects.'$($project.ToLowerInvariant())']"
+      $trustBlock = "`n$header`ntrust_level = `"trusted`"`n"
+      if (-not (Select-String -LiteralPath $config -SimpleMatch $header -Quiet)) {
+        Add-Content -LiteralPath $config -Value $trustBlock
+      }
     }
     exit 0
 agent:

@@ -25,7 +25,14 @@ public sealed class AgentRunner(
         if (request.OnRuntimeInfo is not null)
         {
             await request.OnRuntimeInfo(
-                new AgentRuntimeInfo(request.Issue.Id, request.WorkerHost, workspace.Path),
+                new AgentRuntimeInfo(
+                    request.Issue.Id,
+                    request.WorkerHost,
+                    workspace.Path,
+                    workspace.BaseCommit,
+                    workspace.BaseBranch,
+                    workspace.IsClean,
+                    workspace.Status),
                 cancellationToken).ConfigureAwait(false);
         }
 

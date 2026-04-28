@@ -21,6 +21,10 @@ public sealed record RunningSessionSnapshot(
     Issue? Issue,
     string? WorkerHost,
     string? WorkspacePath,
+    string? WorkspaceBaseCommit,
+    string? WorkspaceBaseBranch,
+    bool WorkspaceClean,
+    string? WorkspaceStatus,
     string? SessionId,
     string? ThreadId,
     string? TurnId,
@@ -45,7 +49,11 @@ public sealed record RetryEntrySnapshot(
     DateTimeOffset DueAt,
     string? Error,
     string? WorkerHost,
-    string? WorkspacePath);
+    string? WorkspacePath,
+    string? WorkspaceBaseCommit,
+    string? WorkspaceBaseBranch,
+    bool WorkspaceClean,
+    string? WorkspaceStatus);
 
 public sealed record CodexTotals(
     long InputTokens,

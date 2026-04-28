@@ -150,7 +150,14 @@ public sealed class SymphonyOrchestrator
         }
     }
 
-    public void IntegrateAgentRuntimeInfo(string issueId, string? workerHost, string workspacePath)
+    public void IntegrateAgentRuntimeInfo(
+        string issueId,
+        string? workerHost,
+        string workspacePath,
+        string? baseCommit,
+        string? baseBranch,
+        bool isClean,
+        string? status)
     {
         lock (_gate)
         {
@@ -159,7 +166,11 @@ public sealed class SymphonyOrchestrator
                 _state.Running[issueId] = running with
                 {
                     WorkerHost = workerHost,
-                    WorkspacePath = workspacePath
+                    WorkspacePath = workspacePath,
+                    WorkspaceBaseCommit = baseCommit,
+                    WorkspaceBaseBranch = baseBranch,
+                    WorkspaceClean = isClean,
+                    WorkspaceStatus = status
                 };
             }
         }

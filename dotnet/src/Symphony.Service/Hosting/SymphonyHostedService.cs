@@ -203,7 +203,14 @@ public sealed class SymphonyHostedService : BackgroundService
                         decision.WorkerHost,
                         (info, _) =>
                         {
-                            _orchestrator!.IntegrateAgentRuntimeInfo(info.IssueId, info.WorkerHost, info.WorkspacePath);
+                            _orchestrator!.IntegrateAgentRuntimeInfo(
+                                info.IssueId,
+                                info.WorkerHost,
+                                info.WorkspacePath,
+                                info.BaseCommit,
+                                info.BaseBranch,
+                                info.IsClean,
+                                info.Status);
                             _state.SetFromCore(_orchestrator.Snapshot());
                             return Task.CompletedTask;
                         }),
@@ -429,6 +436,10 @@ public sealed class SymphonyHostedService : BackgroundService
             running?.CodexTotalTokens ?? 0,
             running?.WorkerHost,
             running?.WorkspacePath,
+            running?.WorkspaceBaseCommit,
+            running?.WorkspaceBaseBranch,
+            running?.WorkspaceClean ?? false,
+            running?.WorkspaceStatus,
             cleanupOutcome);
     }
 }

@@ -69,6 +69,8 @@
                             <DataGridTextColumn Header="Issue" Binding="{Binding IssueIdentifier}" Width="110"/>
                             <DataGridTextColumn Header="State" Binding="{Binding State}" Width="120"/>
                             <DataGridTextColumn Header="Worker" Binding="{Binding WorkerHost}" Width="90"/>
+                            <DataGridTextColumn Header="Base" Binding="{Binding WorkspaceBaseCommit}" Width="90"/>
+                            <DataGridCheckBoxColumn Header="Clean" Binding="{Binding WorkspaceClean}" Width="60"/>
                             <DataGridTextColumn Header="Session" Binding="{Binding SessionId}" Width="170"/>
                             <DataGridTextColumn Header="Event" Binding="{Binding LastEvent}" Width="140"/>
                             <DataGridTextColumn Header="Started" Binding="{Binding StartedAt, StringFormat=t}" Width="90"/>
@@ -84,6 +86,8 @@
                             <DataGridTextColumn Header="Attempt" Binding="{Binding Attempt}" Width="70"/>
                             <DataGridTextColumn Header="Due" Binding="{Binding DueAt, StringFormat=t}" Width="90"/>
                             <DataGridTextColumn Header="Worker" Binding="{Binding WorkerHost}" Width="90"/>
+                            <DataGridTextColumn Header="Base" Binding="{Binding WorkspaceBaseCommit}" Width="90"/>
+                            <DataGridCheckBoxColumn Header="Clean" Binding="{Binding WorkspaceClean}" Width="60"/>
                             <DataGridTextColumn Header="Error" Binding="{Binding Error}" Width="*"/>
                         </DataGrid.Columns>
                     </DataGrid>
@@ -97,6 +101,8 @@
                             <DataGridTextColumn Header="State" Binding="{Binding State}" Width="110"/>
                             <DataGridTextColumn Header="Completed" Binding="{Binding CompletedAt, StringFormat=t}" Width="90"/>
                             <DataGridTextColumn Header="Cleanup" Binding="{Binding CleanupOutcome}" Width="90"/>
+                            <DataGridTextColumn Header="Base" Binding="{Binding WorkspaceBaseCommit}" Width="90"/>
+                            <DataGridCheckBoxColumn Header="Clean" Binding="{Binding WorkspaceClean}" Width="60"/>
                             <DataGridTextColumn Header="Workspace" Binding="{Binding WorkspacePath}" Width="*"/>
                         </DataGrid.Columns>
                     </DataGrid>
@@ -117,6 +123,8 @@
                         <TextBlock Text="{Binding SelectedIssueId}" FontFamily="Consolas" FontSize="11" Foreground="#6B7280" Margin="0,3,0,8"/>
                         <TextBlock Text="Workspace" FontWeight="SemiBold"/>
                         <TextBox Text="{Binding SelectedWorkspace, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" Margin="0,3,0,8"/>
+                        <TextBlock Text="Baseline" FontWeight="SemiBold"/>
+                        <TextBox Text="{Binding SelectedBaseline, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" Margin="0,3,0,8"/>
                         <WrapPanel>
                             <Button Content="Open Dir" Command="{Binding OpenWorkspaceCommand}"/>
                             <Button Content="Open Issue" Command="{Binding OpenIssueCommand}"/>

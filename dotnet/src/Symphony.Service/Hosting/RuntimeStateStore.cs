@@ -136,7 +136,11 @@ public sealed class RuntimeStateStore
                 running.CodexOutputTokens,
                 running.CodexTotalTokens,
                 running.WorkerHost,
-                running.WorkspacePath));
+                running.WorkspacePath,
+                running.WorkspaceBaseCommit,
+                running.WorkspaceBaseBranch,
+                running.WorkspaceClean,
+                running.WorkspaceStatus));
         }
 
         _retrying.Clear();
@@ -149,7 +153,11 @@ public sealed class RuntimeStateStore
                 retry.DueAt,
                 retry.Error,
                 retry.WorkerHost,
-                retry.WorkspacePath));
+                retry.WorkspacePath,
+                retry.WorkspaceBaseCommit,
+                retry.WorkspaceBaseBranch,
+                retry.WorkspaceClean,
+                retry.WorkspaceStatus));
         }
 
         _totals = new CodexTotals(
@@ -213,7 +221,11 @@ public sealed record RunningSession(
     long OutputTokens,
     long TotalTokens,
     string? WorkerHost,
-    string? WorkspacePath);
+    string? WorkspacePath,
+    string? WorkspaceBaseCommit,
+    string? WorkspaceBaseBranch,
+    bool WorkspaceClean,
+    string? WorkspaceStatus);
 
 public sealed record RetryEntry(
     string IssueId,
@@ -222,7 +234,11 @@ public sealed record RetryEntry(
     DateTimeOffset DueAt,
     string? Error,
     string? WorkerHost,
-    string? WorkspacePath);
+    string? WorkspacePath,
+    string? WorkspaceBaseCommit,
+    string? WorkspaceBaseBranch,
+    bool WorkspaceClean,
+    string? WorkspaceStatus);
 
 public sealed record CompletedRunEntry(
     string IssueId,
@@ -243,6 +259,10 @@ public sealed record CompletedRunEntry(
     long TotalTokens,
     string? WorkerHost,
     string? WorkspacePath,
+    string? WorkspaceBaseCommit,
+    string? WorkspaceBaseBranch,
+    bool WorkspaceClean,
+    string? WorkspaceStatus,
     string CleanupOutcome);
 
 public sealed record CodexTotals(long InputTokens, long OutputTokens, long TotalTokens, double SecondsRunning);

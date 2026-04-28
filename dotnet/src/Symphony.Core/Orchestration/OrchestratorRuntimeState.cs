@@ -34,6 +34,10 @@ public sealed record RunningIssue(
     Issue Issue,
     string? WorkerHost,
     string? WorkspacePath,
+    string? WorkspaceBaseCommit,
+    string? WorkspaceBaseBranch,
+    bool WorkspaceClean,
+    string? WorkspaceStatus,
     string? SessionId,
     string? ThreadId,
     string? TurnId,
@@ -59,6 +63,10 @@ public sealed record RetryEntry(
     string? Error,
     string? WorkerHost,
     string? WorkspacePath,
+    string? WorkspaceBaseCommit,
+    string? WorkspaceBaseBranch,
+    bool WorkspaceClean,
+    string? WorkspaceStatus,
     RetryDelayType DelayType);
 
 public enum RetryDelayType

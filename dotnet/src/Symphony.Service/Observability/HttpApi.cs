@@ -57,7 +57,15 @@ public static class HttpApi
                 issue_identifier,
                 issue_id = running?.IssueId ?? retry?.IssueId ?? completed?.IssueId,
                 status = running is not null ? "running" : retry is not null ? "retrying" : "completed",
-                workspace = new { path = running?.WorkspacePath ?? retry?.WorkspacePath ?? completed?.WorkspacePath, host = running?.WorkerHost ?? retry?.WorkerHost ?? completed?.WorkerHost },
+                workspace = new
+                {
+                    path = running?.WorkspacePath ?? retry?.WorkspacePath ?? completed?.WorkspacePath,
+                    host = running?.WorkerHost ?? retry?.WorkerHost ?? completed?.WorkerHost,
+                    base_commit = running?.WorkspaceBaseCommit ?? retry?.WorkspaceBaseCommit ?? completed?.WorkspaceBaseCommit,
+                    base_branch = running?.WorkspaceBaseBranch ?? retry?.WorkspaceBaseBranch ?? completed?.WorkspaceBaseBranch,
+                    clean = running?.WorkspaceClean ?? retry?.WorkspaceClean ?? completed?.WorkspaceClean ?? false,
+                    status = running?.WorkspaceStatus ?? retry?.WorkspaceStatus ?? completed?.WorkspaceStatus
+                },
                 attempts = new { restart_count = Math.Max((retry?.Attempt ?? 0) - 1, 0), current_retry_attempt = retry?.Attempt ?? 0 },
                 running = running is null ? null : RunningPayload(running),
                 retry = retry is null ? null : RetryPayload(retry),
@@ -141,6 +149,10 @@ public static class HttpApi
         state = entry.State,
         worker_host = entry.WorkerHost,
         workspace_path = entry.WorkspacePath,
+        workspace_base_commit = entry.WorkspaceBaseCommit,
+        workspace_base_branch = entry.WorkspaceBaseBranch,
+        workspace_clean = entry.WorkspaceClean,
+        workspace_status = entry.WorkspaceStatus,
         session_id = entry.SessionId,
         turn_count = entry.TurnCount,
         last_event = entry.LastEvent,
@@ -163,7 +175,11 @@ public static class HttpApi
         due_at = entry.DueAt,
         error = entry.Error,
         worker_host = entry.WorkerHost,
-        workspace_path = entry.WorkspacePath
+        workspace_path = entry.WorkspacePath,
+        workspace_base_commit = entry.WorkspaceBaseCommit,
+        workspace_base_branch = entry.WorkspaceBaseBranch,
+        workspace_clean = entry.WorkspaceClean,
+        workspace_status = entry.WorkspaceStatus
     };
 
     private static object CompletedPayload(CompletedRunEntry entry) => new
@@ -174,6 +190,10 @@ public static class HttpApi
         status = entry.Status,
         worker_host = entry.WorkerHost,
         workspace_path = entry.WorkspacePath,
+        workspace_base_commit = entry.WorkspaceBaseCommit,
+        workspace_base_branch = entry.WorkspaceBaseBranch,
+        workspace_clean = entry.WorkspaceClean,
+        workspace_status = entry.WorkspaceStatus,
         session_id = entry.SessionId,
         thread_id = entry.ThreadId,
         turn_id = entry.TurnId,

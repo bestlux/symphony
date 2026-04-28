@@ -24,4 +24,16 @@ public sealed record RetryDto
 
     [JsonPropertyName("workspace_path")]
     public string? WorkspacePath { get; init; }
+
+    [JsonPropertyName("workspace_base_commit")]
+    public string? WorkspaceBaseCommit { get; init; }
+
+    [JsonPropertyName("workspace_base_branch")]
+    public string? WorkspaceBaseBranch { get; init; }
+
+    [JsonPropertyName("workspace_clean")]
+    public bool WorkspaceClean { get; init; }
+
+    [JsonPropertyName("workspace_status")]
+    public string? WorkspaceStatus { get; init; }
 }

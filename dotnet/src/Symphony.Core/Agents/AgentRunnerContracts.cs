@@ -69,7 +69,11 @@ public sealed record AgentRunRequest(
 public sealed record AgentRuntimeInfo(
     string IssueId,
     string? WorkerHost,
-    string WorkspacePath);
+    string WorkspacePath,
+    string? BaseCommit,
+    string? BaseBranch,
+    bool IsClean,
+    string? Status);
 
 public sealed record CodexSessionHandle(
     string Id,

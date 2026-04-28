@@ -184,7 +184,11 @@ public sealed class OrchestratorStateMachine
                 RetryDelayType.Failure,
                 $"stalled for {(long)elapsedMs}ms without codex activity",
                 running.WorkerHost,
-                running.WorkspacePath);
+                running.WorkspacePath,
+                running.WorkspaceBaseCommit,
+                running.WorkspaceBaseBranch,
+                running.WorkspaceClean,
+                running.WorkspaceStatus);
         }
 
         return decisions;
@@ -213,7 +217,11 @@ public sealed class OrchestratorStateMachine
                 RetryDelayType.Continuation,
                 null,
                 running.WorkerHost,
-                running.WorkspacePath);
+                running.WorkspacePath,
+                running.WorkspaceBaseCommit,
+                running.WorkspaceBaseBranch,
+                running.WorkspaceClean,
+                running.WorkspaceStatus);
         }
     }
 
@@ -245,7 +253,11 @@ public sealed class OrchestratorStateMachine
             RetryDelayType.Failure,
             error,
             running.WorkerHost,
-            running.WorkspacePath);
+            running.WorkspacePath,
+            running.WorkspaceBaseCommit,
+            running.WorkspaceBaseBranch,
+            running.WorkspaceClean,
+            running.WorkspaceStatus);
     }
 
     public RetryEntry ScheduleRetry(
@@ -258,11 +270,27 @@ public sealed class OrchestratorStateMachine
         RetryDelayType delayType,
         string? error = null,
         string? workerHost = null,
-        string? workspacePath = null)
+        string? workspacePath = null,
+        string? workspaceBaseCommit = null,
+        string? workspaceBaseBranch = null,
+        bool workspaceClean = false,
+        string? workspaceStatus = null)
     {
         var normalizedAttempt = Math.Max(1, attempt);
         var dueAt = now.AddMilliseconds(RetryDelayMs(normalizedAttempt, delayType, config.Agent.MaxRetryBackoffMs));
-        var entry = new RetryEntry(issueId, identifier, normalizedAttempt, dueAt, error, workerHost, workspacePath, delayType);
+        var entry = new RetryEntry(
+            issueId,
+            identifier,
+            normalizedAttempt,
+            dueAt,
+            error,
+            workerHost,
+            workspacePath,
+            workspaceBaseCommit,
+            workspaceBaseBranch,
+            workspaceClean,
+            workspaceStatus,
+            delayType);
         state.RetryAttempts[issueId] = entry;
         state.Claimed.Add(issueId);
         return entry;
@@ -389,27 +417,31 @@ public sealed class OrchestratorStateMachine
     private void MarkRunning(OrchestratorRuntimeState state, DispatchDecision decision, DateTimeOffset now)
     {
         state.Running[decision.Issue.Id] = new RunningIssue(
-            decision.Issue.Id,
-            decision.Issue.Identifier,
-            decision.Issue,
-            decision.WorkerHost,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            decision.Attempt,
-            now);
+            IssueId: decision.Issue.Id,
+            Identifier: decision.Issue.Identifier,
+            Issue: decision.Issue,
+            WorkerHost: decision.WorkerHost,
+            WorkspacePath: null,
+            WorkspaceBaseCommit: null,
+            WorkspaceBaseBranch: null,
+            WorkspaceClean: false,
+            WorkspaceStatus: null,
+            SessionId: null,
+            ThreadId: null,
+            TurnId: null,
+            CodexAppServerPid: null,
+            LastCodexEvent: null,
+            LastCodexTimestamp: null,
+            LastCodexMessage: null,
+            CodexInputTokens: 0,
+            CodexOutputTokens: 0,
+            CodexTotalTokens: 0,
+            LastReportedInputTokens: 0,
+            LastReportedOutputTokens: 0,
+            LastReportedTotalTokens: 0,
+            TurnCount: 0,
+            RetryAttempt: decision.Attempt,
+            StartedAt: now);
 
         state.Claimed.Add(decision.Issue.Id);
         state.RetryAttempts.Remove(decision.Issue.Id);
@@ -535,6 +567,10 @@ public sealed class OrchestratorStateMachine
             running.Issue,
             running.WorkerHost,
             running.WorkspacePath,
+            running.WorkspaceBaseCommit,
+            running.WorkspaceBaseBranch,
+            running.WorkspaceClean,
+            running.WorkspaceStatus,
             running.SessionId,
             running.ThreadId,
             running.TurnId,
@@ -562,6 +598,10 @@ public sealed class OrchestratorStateMachine
             retry.DueAt,
             retry.Error,
             retry.WorkerHost,
-            retry.WorkspacePath);
+            retry.WorkspacePath,
+            retry.WorkspaceBaseCommit,
+            retry.WorkspaceBaseBranch,
+            retry.WorkspaceClean,
+            retry.WorkspaceStatus);
     }
 }

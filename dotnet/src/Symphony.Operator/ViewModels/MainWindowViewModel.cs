@@ -138,6 +138,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public string SelectedIdentifier => SelectedRun?.IssueIdentifier ?? SelectedRetry?.IssueIdentifier ?? SelectedCompleted?.IssueIdentifier ?? "";
     public string SelectedIssueId => SelectedRun?.IssueId ?? SelectedRetry?.IssueId ?? SelectedCompleted?.IssueId ?? "";
     public string SelectedWorkspace => SelectedRun?.WorkspacePath ?? SelectedRetry?.WorkspacePath ?? SelectedCompleted?.WorkspacePath ?? "";
+    public string SelectedBaseline => SelectionBaseline();
     public string SelectedLastMessage => SelectedRun?.LastMessage ?? SelectedRetry?.Error ?? SelectedCompletedSummary();
 
     public void Dispose()
@@ -241,6 +242,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(SelectedIdentifier));
         OnPropertyChanged(nameof(SelectedIssueId));
         OnPropertyChanged(nameof(SelectedWorkspace));
+        OnPropertyChanged(nameof(SelectedBaseline));
         OnPropertyChanged(nameof(SelectedLastMessage));
         StopCommand.RaiseCanExecuteChanged();
         RetryCommand.RaiseCanExecuteChanged();
@@ -315,6 +317,26 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             $"Tokens: {SelectedCompleted.Tokens.TotalTokens:N0}",
             $"Last event: {SelectedCompleted.LastEvent ?? "-"}",
             $"Message: {SelectedCompleted.LastMessage ?? SelectedCompleted.Error ?? "-"}");
+    }
+
+    private string SelectionBaseline()
+    {
+        var commit = SelectedRun?.WorkspaceBaseCommit ?? SelectedRetry?.WorkspaceBaseCommit ?? SelectedCompleted?.WorkspaceBaseCommit;
+        var branch = SelectedRun?.WorkspaceBaseBranch ?? SelectedRetry?.WorkspaceBaseBranch ?? SelectedCompleted?.WorkspaceBaseBranch;
+        var clean = SelectedRun?.WorkspaceClean ?? SelectedRetry?.WorkspaceClean ?? SelectedCompleted?.WorkspaceClean;
+        var status = SelectedRun?.WorkspaceStatus ?? SelectedRetry?.WorkspaceStatus ?? SelectedCompleted?.WorkspaceStatus;
+
+        if (string.IsNullOrWhiteSpace(commit) && string.IsNullOrWhiteSpace(branch) && clean is null)
+        {
+            return "";
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            $"Branch: {branch ?? "-"}",
+            $"Commit: {commit ?? "-"}",
+            $"Clean: {clean}",
+            $"Status: {status ?? "-"}");
     }
 
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> source)

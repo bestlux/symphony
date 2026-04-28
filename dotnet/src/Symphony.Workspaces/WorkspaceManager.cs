@@ -2,6 +2,7 @@ using Symphony.Abstractions.Issues;
 using Symphony.Abstractions.Workspaces;
 using Symphony.Core.Agents;
 using Symphony.Core.Configuration;
+using System.Diagnostics;
 
 namespace Symphony.Workspaces;
 
@@ -45,7 +46,7 @@ public sealed class WorkspaceManager : IWorkspaceCoordinator
                 await _hookRunner.RunLocalAsync("after_create", options.Hooks.AfterCreate, workspace, options.Hooks.TimeoutMs, cancellationToken).ConfigureAwait(false);
             }
 
-            return new WorkspaceInfo(workspace, safeId, created, null);
+            return EnsureClean(InspectLocalWorkspace(workspace, safeId, created));
         }
 
         var remoteWorkspace = PathSafety.RemoteWorkspacePath(options.Root, safeId);
@@ -56,7 +57,7 @@ public sealed class WorkspaceManager : IWorkspaceCoordinator
             await _hookRunner.RunRemoteAsync(_sshClient, workerHost, "after_create", options.Hooks.AfterCreate, remote.Path, options.Hooks.TimeoutMs, cancellationToken).ConfigureAwait(false);
         }
 
-        return new WorkspaceInfo(remote.Path, safeId, remote.CreatedNow, workerHost);
+        return EnsureClean(await InspectRemoteWorkspaceAsync(workerHost, remote.Path, safeId, remote.CreatedNow, options.Hooks.TimeoutMs, cancellationToken).ConfigureAwait(false));
     }
 
     public Task<WorkspaceInfo> CreateForIssueAsync(
@@ -229,6 +230,112 @@ public sealed class WorkspaceManager : IWorkspaceCoordinator
             $"  '~') {variableName}=\"$HOME\" ;;",
             $"  '~/'*) {variableName}=\"$HOME/${{{variableName}#~/}}\" ;;",
             "esac");
+    }
+
+    private static WorkspaceInfo InspectLocalWorkspace(string workspace, string workspaceKey, bool created)
+    {
+        if (!Directory.Exists(Path.Combine(workspace, ".git")))
+        {
+            throw new WorkspaceException($"Workspace '{workspace}' is not a git repository after preparation.");
+        }
+
+        var baseCommit = RunGit(workspace, "rev-parse HEAD").Trim();
+        var baseBranch = RunGit(workspace, "rev-parse --abbrev-ref HEAD").Trim();
+        var status = RunGit(workspace, "status --porcelain=v1").Trim();
+        return new WorkspaceInfo(
+            workspace,
+            workspaceKey,
+            created,
+            null,
+            string.IsNullOrWhiteSpace(baseCommit) ? null : baseCommit,
+            string.IsNullOrWhiteSpace(baseBranch) ? null : baseBranch,
+            string.IsNullOrWhiteSpace(status),
+            string.IsNullOrWhiteSpace(status) ? null : status);
+    }
+
+    private async Task<WorkspaceInfo> InspectRemoteWorkspaceAsync(
+        string workerHost,
+        string workspace,
+        string workspaceKey,
+        bool created,
+        int timeoutMs,
+        CancellationToken cancellationToken)
+    {
+        var script = string.Join('\n',
+            "set -eu",
+            RemoteAssign("workspace", workspace),
+            "cd \"$workspace\"",
+            "test -d .git",
+            "base_commit=$(git rev-parse HEAD)",
+            "base_branch=$(git rev-parse --abbrev-ref HEAD)",
+            "status=$(git status --porcelain=v1)",
+            "if [ -z \"$status\" ]; then clean=1; else clean=0; fi",
+            $"printf '%s\\t%s\\t%s\\t%s\\n' '{RemoteWorkspaceMarker}' \"$base_commit\" \"$base_branch\" \"$clean\"",
+            "if [ \"$clean\" = 0 ]; then printf '%s\\n' \"$status\"; fi");
+
+        var result = await _sshClient.RunAsync(workerHost, script, timeoutMs, cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode != 0)
+        {
+            throw new WorkspaceException($"Remote workspace git baseline inspection failed on '{workerHost}' with exit code {result.ExitCode}. Output={result.Output}");
+        }
+
+        var lines = result.Output.Split('\n', StringSplitOptions.TrimEntries);
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var parts = lines[i].Split('\t', 4);
+            if (parts.Length == 4 && parts[0] == RemoteWorkspaceMarker && (parts[3] == "0" || parts[3] == "1"))
+            {
+                var isClean = parts[3] == "1";
+                var status = isClean
+                    ? null
+                    : string.Join('\n', lines[(i + 1)..].Where(line => !string.IsNullOrWhiteSpace(line)));
+                return new WorkspaceInfo(
+                    workspace,
+                    workspaceKey,
+                    created,
+                    workerHost,
+                    parts[1],
+                    parts[2],
+                    isClean,
+                    string.IsNullOrWhiteSpace(status) ? null : status);
+            }
+        }
+
+        throw new WorkspaceException($"Remote workspace git baseline inspection returned unrecognized output. Output={result.Output}");
+    }
+
+    private static WorkspaceInfo EnsureClean(WorkspaceInfo workspace)
+    {
+        if (workspace.IsClean)
+        {
+            return workspace;
+        }
+
+        throw new WorkspaceException(
+            $"Workspace '{workspace.Path}' is dirty before dispatch. BaseCommit={workspace.BaseCommit ?? "<unknown>"} BaseBranch={workspace.BaseBranch ?? "<unknown>"} Status={workspace.Status}");
+    }
+
+    private static string RunGit(string workingDirectory, string arguments)
+    {
+        var startInfo = new ProcessStartInfo("git", arguments)
+        {
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+
+        using var process = Process.Start(startInfo)
+            ?? throw new WorkspaceException($"Failed to start git {arguments} in '{workingDirectory}'.");
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode != 0)
+        {
+            throw new WorkspaceException($"git {arguments} failed in '{workingDirectory}' with exit code {process.ExitCode}. Output={output} Error={error}");
+        }
+
+        return output;
     }
 
     private static async Task IgnoreHookFailureAsync(Func<Task> action)
