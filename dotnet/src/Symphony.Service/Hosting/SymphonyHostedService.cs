@@ -209,6 +209,7 @@ public sealed class SymphonyHostedService : BackgroundService
                         prompt,
                         attempt,
                         decision.WorkerHost,
+                        runKind.ActiveState,
                         (info, _) =>
                         {
                             _orchestrator!.IntegrateAgentRuntimeInfo(

@@ -130,7 +130,7 @@ public sealed class AgentRunner(
             }
 
             var refreshedIssue = await RefreshIssueAsync(currentIssue.Id, cancellationToken).ConfigureAwait(false);
-            if (refreshedIssue is null || !ShouldContinue(refreshedIssue, request.Config))
+            if (refreshedIssue is null || !ShouldContinue(refreshedIssue, request.Config, request.ContinueWhileState))
             {
                 return ToRunResult(request with { Issue = refreshedIssue ?? currentIssue }, lastTurn, turnNumber, startedAt);
             }
@@ -149,7 +149,10 @@ public sealed class AgentRunner(
         return issues.FirstOrDefault();
     }
 
-    private static bool ShouldContinue(Symphony.Abstractions.Issues.Issue issue, SymphonyConfig config)
+    private static bool ShouldContinue(
+        Symphony.Abstractions.Issues.Issue issue,
+        SymphonyConfig config,
+        string? continueWhileState)
     {
         if (issue.AssignedToWorker == false)
         {
@@ -157,6 +160,11 @@ public sealed class AgentRunner(
         }
 
         var state = ConfigResolver.NormalizeIssueState(issue.State);
+        if (!string.IsNullOrWhiteSpace(continueWhileState))
+        {
+            return ConfigResolver.NormalizeIssueState(continueWhileState) == state;
+        }
+
         return config.Tracker.ActiveStates.Any(active =>
             ConfigResolver.NormalizeIssueState(active) == state);
     }

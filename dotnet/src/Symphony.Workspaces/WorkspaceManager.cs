@@ -30,7 +30,11 @@ public sealed class WorkspaceManager : IWorkspaceCoordinator
         _sshClient = sshClient;
     }
 
-    public async Task<WorkspaceInfo> CreateForIssueAsync(string? issueIdentifier, string? workerHost = null, CancellationToken cancellationToken = default)
+    public async Task<WorkspaceInfo> CreateForIssueAsync(
+        string? issueIdentifier,
+        string? workerHost = null,
+        CancellationToken cancellationToken = default,
+        bool requireCleanWorkspace = true)
     {
         var options = _optionsFactory();
         var safeId = PathSafety.SafeIdentifier(issueIdentifier);
@@ -46,7 +50,7 @@ public sealed class WorkspaceManager : IWorkspaceCoordinator
                 await _hookRunner.RunLocalAsync("after_create", options.Hooks.AfterCreate, workspace, options.Hooks.TimeoutMs, cancellationToken).ConfigureAwait(false);
             }
 
-            return EnsureClean(InspectLocalWorkspace(workspace, safeId, created));
+            return RequireCleanIfNeeded(InspectLocalWorkspace(workspace, safeId, created), requireCleanWorkspace);
         }
 
         var remoteWorkspace = PathSafety.RemoteWorkspacePath(options.Root, safeId);
@@ -57,7 +61,9 @@ public sealed class WorkspaceManager : IWorkspaceCoordinator
             await _hookRunner.RunRemoteAsync(_sshClient, workerHost, "after_create", options.Hooks.AfterCreate, remote.Path, options.Hooks.TimeoutMs, cancellationToken).ConfigureAwait(false);
         }
 
-        return EnsureClean(await InspectRemoteWorkspaceAsync(workerHost, remote.Path, safeId, remote.CreatedNow, options.Hooks.TimeoutMs, cancellationToken).ConfigureAwait(false));
+        return RequireCleanIfNeeded(
+            await InspectRemoteWorkspaceAsync(workerHost, remote.Path, safeId, remote.CreatedNow, options.Hooks.TimeoutMs, cancellationToken).ConfigureAwait(false),
+            requireCleanWorkspace);
     }
 
     public Task<WorkspaceInfo> CreateForIssueAsync(
@@ -66,7 +72,11 @@ public sealed class WorkspaceManager : IWorkspaceCoordinator
         string? workerHost,
         CancellationToken cancellationToken)
     {
-        return ForConfig(config).CreateForIssueAsync(issue.Identifier, workerHost, cancellationToken);
+        return ForConfig(config).CreateForIssueAsync(
+            issue.Identifier,
+            workerHost,
+            cancellationToken,
+            RequireCleanWorkspaceForIssue(issue));
     }
 
     public Task RunBeforeRunHookAsync(
@@ -302,6 +312,16 @@ public sealed class WorkspaceManager : IWorkspaceCoordinator
         }
 
         throw new WorkspaceException($"Remote workspace git baseline inspection returned unrecognized output. Output={result.Output}");
+    }
+
+    private static bool RequireCleanWorkspaceForIssue(Issue issue)
+    {
+        return string.Equals(issue.State, "Todo", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static WorkspaceInfo RequireCleanIfNeeded(WorkspaceInfo workspace, bool requireCleanWorkspace)
+    {
+        return requireCleanWorkspace ? EnsureClean(workspace) : workspace;
     }
 
     private static WorkspaceInfo EnsureClean(WorkspaceInfo workspace)

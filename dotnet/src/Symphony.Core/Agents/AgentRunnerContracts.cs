@@ -64,6 +64,7 @@ public sealed record AgentRunRequest(
     string Prompt,
     int? Attempt,
     string? WorkerHost,
+    string? ContinueWhileState = null,
     Func<AgentRuntimeInfo, CancellationToken, Task>? OnRuntimeInfo = null);
 
 public sealed record AgentRuntimeInfo(
