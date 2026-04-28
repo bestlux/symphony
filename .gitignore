@@ -8,3 +8,5 @@ symphony.secrets
 *.secrets.local
 node_modules/
 tmp/
+.tmp-validate/
+.tmp-userprofile/

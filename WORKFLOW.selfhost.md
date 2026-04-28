@@ -101,7 +101,7 @@ Operating rules:
 3. Keep changes scoped to the Linear issue.
 4. Prefer direct, useful implementation over heavy process.
 5. Use the existing .NET solution under `dotnet/Symphony.slnx`.
-6. Validate with `dotnet build dotnet/Symphony.slnx` at minimum.
+6. Validate with `.\scripts\validate-symphony.ps1` at minimum. If you are blocked, report the exact failing phase and command output.
 7. If you discover out-of-scope useful work, create or propose a separate Linear follow-up issue instead of expanding scope.
 8. Final response must summarize changes, validation, blockers, and any follow-up issues.
 9. Do not move implementation issues directly to Done. End code work in Ready for Review with a review packet.
@@ -119,3 +119,5 @@ Environment note:
 
 - The workspace root `D:\Source\symphony-workspaces` should be trusted in Codex.
 - The `after_create` hook also adds the exact generated workspace path to `C:\Users\iomancer\.codex\config.toml` before `codex app-server` starts.
+- Use `.\scripts\validate-symphony.ps1` instead of ad hoc build commands. It runs the Operator web build through `npm.cmd`, clears stale ASP.NET static web asset metadata after Vite changes hashed files, and builds `dotnet\Symphony.slnx` single-node with NuGet audit disabled.
+- If only .NET code changed, `.\scripts\validate-symphony.ps1 -SkipWeb` is acceptable. If frontend assets changed, do not hand-edit `wwwroot\operator\index.html`; run the script and commit the Vite-generated asset names.
