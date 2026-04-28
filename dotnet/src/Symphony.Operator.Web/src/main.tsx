@@ -585,8 +585,8 @@ function completedCard(item: CompletedItem): WorkCard {
 }
 
 function isReviewer(item: RunningItem): boolean {
-  const haystack = `${item.state} ${item.last_event ?? ""} ${item.last_message ?? ""}`.toLowerCase();
-  return haystack.includes("review");
+  const kind = stateToKind(item.state);
+  return kind === "ready-review" || kind === "reviewing";
 }
 
 function buildTimeline(selected: WorkCard | undefined, state: SymphonyState | null) {
