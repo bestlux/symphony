@@ -34,6 +34,11 @@ help with the setup:
 > Set up Symphony for my repository based on
 > https://github.com/openai/symphony/blob/main/elixir/README.md
 
+### Option 3. Try the .NET implementation
+
+Check out [dotnet/README.md](dotnet/README.md) for the local .NET 10 implementation. It follows
+the same spec and targets parity with the Elixir reference while using a Generic Host service.
+
 ---
 
 ## License

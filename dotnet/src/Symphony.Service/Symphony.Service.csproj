@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Symphony.Abstractions\Symphony.Abstractions.csproj" />
+    <ProjectReference Include="..\Symphony.Core\Symphony.Core.csproj" />
+    <ProjectReference Include="..\Symphony.Linear\Symphony.Linear.csproj" />
+    <ProjectReference Include="..\Symphony.Workspaces\Symphony.Workspaces.csproj" />
+    <ProjectReference Include="..\Symphony.Codex\Symphony.Codex.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Symphony.Abstractions\Symphony.Abstractions.csproj" />
+    <ProjectReference Include="..\Symphony.Core\Symphony.Core.csproj" />
+    <ProjectReference Include="..\Symphony.Linear\Symphony.Linear.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>
