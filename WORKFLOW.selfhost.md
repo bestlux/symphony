@@ -36,7 +36,7 @@ agent:
   max_concurrent_agents: 1
   max_turns: 12
 codex:
-  command: $env:PATH='C:\Users\iomancer\AppData\Local\Microsoft\WinGet\Links;C:\Program Files\Git\cmd;C:\Program Files\dotnet;C:\Program Files\PowerShell\7;' + $env:PATH; codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=medium --model gpt-5.5 app-server
+  command: codex --config shell_environment_policy.inherit=all --config "shell_environment_policy.set.PATH='C:\Users\iomancer\AppData\Local\Microsoft\WinGet\Links;C:\Program Files\Git\cmd;C:\Program Files\dotnet;C:\Program Files\PowerShell\7;C:\Program Files\nodejs;C:\Program Files\GitHub CLI;C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Windows\System32\OpenSSH;C:\Users\iomancer\AppData\Roaming\npm;C:\Users\iomancer\.dotnet\tools;C:\Users\iomancer\.cargo\bin;C:\Users\iomancer\AppData\Local\Microsoft\WindowsApps'" --config model_reasoning_effort=medium --model gpt-5.5 app-server
   approval_policy: never
   thread_sandbox: workspace-write
   turn_sandbox_policy:
