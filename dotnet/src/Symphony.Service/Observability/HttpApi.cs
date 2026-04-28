@@ -172,6 +172,36 @@ public static class HttpApi
             return Results.Accepted(value: new { accepted = true, issue_id, state = request.State });
         });
 
+        app.MapPost("/api/v1/workspaces/open", (OpenWorkspaceRequest request, ConfigBackedOptions options) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Path))
+            {
+                return Results.BadRequest(new { error = new { code = "missing_path", message = "Path is required." } });
+            }
+
+            var fullPath = Path.GetFullPath(request.Path);
+            var workspaceRoot = Path.GetFullPath(options.CurrentConfig().Workspace.Root);
+            if (!IsPathWithin(fullPath, workspaceRoot))
+            {
+                return Results.BadRequest(new { error = new { code = "workspace_outside_root", message = "Workspace path is outside the configured workspace root." } });
+            }
+
+            if (!Directory.Exists(fullPath))
+            {
+                return Results.BadRequest(new { error = new { code = "workspace_not_found", message = "Workspace path does not exist." } });
+            }
+
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                UseShellExecute = false
+            };
+            startInfo.ArgumentList.Add(fullPath);
+            System.Diagnostics.Process.Start(startInfo);
+
+            return Results.Accepted(value: new { accepted = true, path = fullPath });
+        });
+
         app.MapGet("/api/v1/logs/recent", (int? count, RuntimeStateStore state) =>
         {
             return Results.Json(new
@@ -309,6 +339,14 @@ public static class HttpApi
 
         return Results.File(indexPath, "text/html");
     }
+
+    private static bool IsPathWithin(string path, string root)
+    {
+        var relativePath = Path.GetRelativePath(root, path);
+        return relativePath == "."
+            || (!relativePath.StartsWith("..", StringComparison.Ordinal)
+                && !Path.IsPathRooted(relativePath));
+    }
 }
 
 public sealed record StopRunRequest(
@@ -318,3 +356,7 @@ public sealed record StopRunRequest(
 public sealed record UpdateIssueStateRequest(
     [property: System.Text.Json.Serialization.JsonPropertyName("state")]
     string State);
+
+public sealed record OpenWorkspaceRequest(
+    [property: System.Text.Json.Serialization.JsonPropertyName("path")]
+    string Path);
