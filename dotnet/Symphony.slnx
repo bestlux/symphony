@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Symphony.Abstractions/Symphony.Abstractions.csproj" />
+    <Project Path="src/Symphony.Codex/Symphony.Codex.csproj" />
+    <Project Path="src/Symphony.Core/Symphony.Core.csproj" />
+    <Project Path="src/Symphony.Linear/Symphony.Linear.csproj" />
+    <Project Path="src/Symphony.Operator/Symphony.Operator.csproj" />
+    <Project Path="src/Symphony.Service/Symphony.Service.csproj" />
+    <Project Path="src/Symphony.Workspaces/Symphony.Workspaces.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,126 @@
+<Window x:Class="Symphony.Operator.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Symphony Operator" Height="760" Width="1180"
+        MinHeight="620" MinWidth="960"
+        Background="#F4F5F7">
+    <Window.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#1F2933"/>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="MinWidth" Value="76"/>
+            <Setter Property="Margin" Value="4,0,0,0"/>
+            <Setter Property="Padding" Value="10,5"/>
+        </Style>
+        <Style TargetType="DataGrid">
+            <Setter Property="AutoGenerateColumns" Value="False"/>
+            <Setter Property="CanUserAddRows" Value="False"/>
+            <Setter Property="CanUserDeleteRows" Value="False"/>
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="GridLinesVisibility" Value="Horizontal"/>
+            <Setter Property="HeadersVisibility" Value="Column"/>
+            <Setter Property="RowHeaderWidth" Value="0"/>
+            <Setter Property="SelectionMode" Value="Single"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#111827" Padding="12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="Symphony Operator" Foreground="White" FontSize="16" FontWeight="SemiBold" Margin="0,0,18,0"/>
+                    <TextBlock Text="{Binding ConnectionStatus}" Foreground="#C7D2FE" Margin="0,0,18,0"/>
+                    <TextBlock Text="{Binding PollingStatus}" Foreground="#D1D5DB" Margin="0,0,18,0"/>
+                    <TextBlock Text="{Binding TokenSummary}" Foreground="#D1D5DB"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button Content="Refresh" Command="{Binding RefreshCommand}"/>
+                    <Button Content="Stop" Command="{Binding StopCommand}"/>
+                    <Button Content="Retry" Command="{Binding RetryCommand}"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Margin="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2.1*"/>
+                <ColumnDefinition Width="12"/>
+                <ColumnDefinition Width="1*"/>
+            </Grid.ColumnDefinitions>
+
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="12"/>
+                    <RowDefinition Height="0.8*"/>
+                </Grid.RowDefinitions>
+
+                <GroupBox Header="Running">
+                    <DataGrid ItemsSource="{Binding Running}" SelectedItem="{Binding SelectedRun, Mode=TwoWay}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Issue" Binding="{Binding IssueIdentifier}" Width="110"/>
+                            <DataGridTextColumn Header="State" Binding="{Binding State}" Width="120"/>
+                            <DataGridTextColumn Header="Worker" Binding="{Binding WorkerHost}" Width="90"/>
+                            <DataGridTextColumn Header="Session" Binding="{Binding SessionId}" Width="170"/>
+                            <DataGridTextColumn Header="Event" Binding="{Binding LastEvent}" Width="140"/>
+                            <DataGridTextColumn Header="Started" Binding="{Binding StartedAt, StringFormat=t}" Width="90"/>
+                            <DataGridTextColumn Header="Workspace" Binding="{Binding WorkspacePath}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </GroupBox>
+
+                <GroupBox Grid.Row="2" Header="Retry Queue">
+                    <DataGrid ItemsSource="{Binding Retrying}" SelectedItem="{Binding SelectedRetry, Mode=TwoWay}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Issue" Binding="{Binding IssueIdentifier}" Width="110"/>
+                            <DataGridTextColumn Header="Attempt" Binding="{Binding Attempt}" Width="70"/>
+                            <DataGridTextColumn Header="Due" Binding="{Binding DueAt, StringFormat=t}" Width="90"/>
+                            <DataGridTextColumn Header="Worker" Binding="{Binding WorkerHost}" Width="90"/>
+                            <DataGridTextColumn Header="Error" Binding="{Binding Error}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </GroupBox>
+            </Grid>
+
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="1.1*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <GroupBox Header="Selection" Padding="8">
+                    <StackPanel>
+                        <TextBlock Text="{Binding SelectedIdentifier}" FontSize="18" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding SelectedIssueId}" FontFamily="Consolas" FontSize="11" Foreground="#6B7280" Margin="0,3,0,8"/>
+                        <TextBlock Text="Workspace" FontWeight="SemiBold"/>
+                        <TextBox Text="{Binding SelectedWorkspace, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" Margin="0,3,0,8"/>
+                        <WrapPanel>
+                            <Button Content="Open Dir" Command="{Binding OpenWorkspaceCommand}"/>
+                            <Button Content="Open Issue" Command="{Binding OpenIssueCommand}"/>
+                            <Button Content="Stop" Command="{Binding StopCommand}"/>
+                            <Button Content="Retry" Command="{Binding RetryCommand}"/>
+                        </WrapPanel>
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Grid.Row="1" Header="Last Message" Margin="0,12,0,0" Padding="8">
+                    <TextBox Text="{Binding SelectedLastMessage, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+                </GroupBox>
+
+                <GroupBox Grid.Row="2" Header="Recent Logs" Margin="0,12,0,0" Padding="8">
+                    <ListBox ItemsSource="{Binding RecentLogs}" FontFamily="Consolas" FontSize="11"/>
+                </GroupBox>
+
+                <TextBlock Grid.Row="3" Text="{Binding LastError}" Foreground="#B91C1C"/>
+            </Grid>
+        </Grid>
+    </DockPanel>
+</Window>
