@@ -6,6 +6,7 @@ namespace Symphony.Service.Hosting;
 
 public sealed class RuntimeStateStore
 {
+    private static readonly JsonSerializerOptions LedgerJsonOptions = new(JsonSerializerDefaults.Web);
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
     private readonly ConcurrentDictionary<string, RunningSession> _running = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, RetryEntry> _retrying = new(StringComparer.OrdinalIgnoreCase);
@@ -30,7 +31,7 @@ public sealed class RuntimeStateStore
         {
             try
             {
-                var entry = JsonSerializer.Deserialize<CompletedRunEntry>(line);
+                var entry = JsonSerializer.Deserialize<CompletedRunEntry>(line, LedgerJsonOptions);
                 if (entry is not null)
                 {
                     _completed.Enqueue(entry);
@@ -58,6 +59,11 @@ public sealed class RuntimeStateStore
     public void UpsertRetry(RetryEntry retry) => _retrying[retry.IssueIdentifier] = retry;
     public void RemoveRetry(string issueIdentifier) => _retrying.TryRemove(issueIdentifier, out _);
 
+    public void RecordIssueStateTransition(string issueIdentifier, string message)
+    {
+        AddRecentEvent($"{DateTimeOffset.UtcNow:O} {issueIdentifier} {message}");
+    }
+
     public void RecordCompletion(CompletedRunEntry entry)
     {
         _completed.Enqueue(entry);
@@ -69,7 +75,7 @@ public sealed class RuntimeStateStore
             return;
         }
 
-        var json = JsonSerializer.Serialize(entry, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var json = JsonSerializer.Serialize(entry, LedgerJsonOptions);
         File.AppendAllText(_completedLedgerPath, json + Environment.NewLine);
     }
 

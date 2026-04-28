@@ -165,6 +165,20 @@ public sealed class SymphonyOrchestrator
         }
     }
 
+    public void UpdateRunningIssueState(string issueId, string stateName)
+    {
+        lock (_gate)
+        {
+            if (_state.Running.TryGetValue(issueId, out var running))
+            {
+                _state.Running[issueId] = running with
+                {
+                    Issue = running.Issue with { State = stateName }
+                };
+            }
+        }
+    }
+
     public void MarkCompleted(
         string issueId,
         bool scheduleContinuationCheck,
@@ -174,6 +188,14 @@ public sealed class SymphonyOrchestrator
         lock (_gate)
         {
             _stateMachine.MarkCompleted(_state, issueId, scheduleContinuationCheck, config, now);
+        }
+    }
+
+    public void MarkCancelled(string issueId)
+    {
+        lock (_gate)
+        {
+            _stateMachine.MarkCancelled(_state, issueId);
         }
     }
 

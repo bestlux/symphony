@@ -191,6 +191,8 @@ public sealed class SymphonyHostedService : BackgroundService
         {
             try
             {
+                await MoveClaimedTodoIssueToInProgressAsync(decision, cts.Token).ConfigureAwait(false);
+
                 var prompt = _promptRenderer.Render(_workflowStore.Current.PromptTemplate, decision.Issue, attempt);
                 var result = await _agentRunner.RunAsync(
                     new AgentRunRequest(
@@ -225,7 +227,10 @@ public sealed class SymphonyHostedService : BackgroundService
                 }
                 else
                 {
-                    _state.RecordCompletion(ToCompletedRunEntry(result, decision.Issue.Id, "retained"));
+                    if (_orchestrator!.Snapshot().Running.Any(run => run.IssueId == decision.Issue.Id))
+                    {
+                        _state.RecordCompletion(ToCompletedRunEntry(result, decision.Issue.Id, "retained"));
+                    }
                 }
             }
             catch (Exception ex)
@@ -250,6 +255,44 @@ public sealed class SymphonyHostedService : BackgroundService
                 _state.SetFromCore(_orchestrator!.Snapshot());
             }
         }, CancellationToken.None);
+    }
+
+    private async Task MoveClaimedTodoIssueToInProgressAsync(DispatchDecision decision, CancellationToken cancellationToken)
+    {
+        const string sourceState = "Todo";
+        const string targetState = "In Progress";
+
+        if (!string.Equals(decision.Issue.State, sourceState, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        try
+        {
+            await _tracker.UpdateIssueStateAsync(decision.Issue.Id, targetState, cancellationToken).ConfigureAwait(false);
+            _orchestrator!.UpdateRunningIssueState(decision.Issue.Id, targetState);
+            _state.RecordIssueStateTransition(
+                decision.Issue.Identifier,
+                $"Linear state moved from {sourceState} to {targetState} after dispatch");
+            _state.SetFromCore(_orchestrator.Snapshot());
+            _logger.LogInformation(
+                "Moved Linear issue {IssueIdentifier} from {SourceState} to {TargetState} after dispatch",
+                decision.Issue.Identifier,
+                sourceState,
+                targetState);
+        }
+        catch (Exception ex)
+            when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            var message = $"Linear state move from {sourceState} to {targetState} failed after dispatch: {ex.Message}";
+            _state.RecordIssueStateTransition(decision.Issue.Identifier, message);
+            _logger.LogError(
+                ex,
+                "Failed to move Linear issue {IssueIdentifier} from {SourceState} to {TargetState} after dispatch",
+                decision.Issue.Identifier,
+                sourceState,
+                targetState);
+        }
     }
 
     private void StopRun(StopDecision stop, SymphonyConfig config, CancellationToken cancellationToken)
@@ -306,6 +349,21 @@ public sealed class SymphonyHostedService : BackgroundService
             cts.Dispose();
         }
 
+        _state.RecordCompletion(ToCompletedRunEntry(
+            new RunResult(
+                running.IssueId,
+                running.Identifier,
+                RunStatus.Cancelled,
+                running.ThreadId,
+                running.TurnId,
+                running.SessionId,
+                running.TurnCount,
+                "operator requested stop",
+                running.StartedAt,
+                DateTimeOffset.UtcNow),
+            running.IssueId,
+            cleanupWorkspace ? "retained" : "not requested"));
+        _orchestrator!.MarkCancelled(running.IssueId);
         if (cleanupWorkspace && running.Issue is not null)
         {
             await _workspaces.RemoveForIssueAsync(

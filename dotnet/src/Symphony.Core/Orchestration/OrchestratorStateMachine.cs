@@ -217,6 +217,11 @@ public sealed class OrchestratorStateMachine
         }
     }
 
+    public void MarkCancelled(OrchestratorRuntimeState state, string issueId)
+    {
+        PopRunning(state, issueId);
+    }
+
     public void MarkFailed(
         OrchestratorRuntimeState state,
         string issueId,
