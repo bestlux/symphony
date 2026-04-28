@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   Square,
   Timer,
+  Trash2,
   UserCheck,
   Workflow,
   XCircle
@@ -132,7 +133,7 @@ type BoardPayload = {
   active_states: string[];
 };
 
-type CardKind = "todo" | "running" | "ready-review" | "reviewing" | "blocked" | "done";
+type CardKind = "todo" | "running" | "ready-review" | "reviewing" | "blocked" | "done" | "merged";
 
 type WorkCard = {
   key: string;
@@ -194,7 +195,8 @@ const laneMeta: Array<Omit<Lane, "cards">> = [
   { key: "ready-review", name: "Ready for Review", caption: "Needs neutral agent", tone: "amber", icon: <ShieldCheck size={16} /> },
   { key: "reviewing", name: "Reviewing", caption: "Reviewer active", tone: "violet", icon: <Activity size={16} /> },
   { key: "blocked", name: "Blocked", caption: "Needs intervention", tone: "red", icon: <AlertTriangle size={16} /> },
-  { key: "done", name: "Done", caption: "Reviewed and closed", tone: "slate", icon: <CheckCircle2 size={16} /> }
+  { key: "done", name: "Done", caption: "Approved, not merged", tone: "slate", icon: <CheckCircle2 size={16} /> },
+  { key: "merged", name: "Merged", caption: "Landed in checkout", tone: "green", icon: <GitBranch size={16} /> }
 ];
 
 function App() {
@@ -409,6 +411,18 @@ function App() {
                     disabled={(selected.kind !== "reviewing" && selected.kind !== "ready-review") || busyAction !== ""}
                   >
                     <MessageSquare size={15} />Revise
+                  </button>
+                  <button
+                    onClick={() => runAction("merge", () => mergeIssue(selected.issueId, selected.workspace))}
+                    disabled={selected.kind !== "done" || !selected.workspace || busyAction !== ""}
+                  >
+                    <GitBranch size={15} />Merge
+                  </button>
+                  <button
+                    onClick={() => runAction("cleanup", () => cleanupWorkspace(selected.issueId, selected.workspace))}
+                    disabled={selected.kind !== "merged" || !selected.workspace || busyAction !== ""}
+                  >
+                    <Trash2 size={15} />Cleanup
                   </button>
                   <small>Reviewer agents automatically claim Ready for Review; manual controls are here for intervention.</small>
                 </div>
@@ -654,12 +668,27 @@ async function post(url: string, body?: unknown): Promise<void> {
     body: body ? JSON.stringify(body) : undefined
   });
   if (!response.ok) {
-    throw new Error(`${url} failed: ${response.status}`);
+    let message = `${url} failed: ${response.status}`;
+    try {
+      const payload = await response.json();
+      message = payload?.error?.message ?? message;
+    } catch {
+      // Keep the status-only fallback when the server does not return JSON.
+    }
+    throw new Error(message);
   }
 }
 
 async function moveIssue(issueId: string, state: string): Promise<void> {
   await post(`/api/v1/issues/${encodeURIComponent(issueId)}/state`, { state });
+}
+
+async function mergeIssue(issueId: string, workspace: string): Promise<void> {
+  await post(`/api/v1/issues/${encodeURIComponent(issueId)}/merge`, { workspace_path: workspace, cleanup_workspace: false });
+}
+
+async function cleanupWorkspace(issueId: string, workspace: string): Promise<void> {
+  await post("/api/v1/workspaces/cleanup", { issue_id: issueId, workspace_path: workspace, force: false });
 }
 
 function buildReviewItems(board: BoardPayload | null, state: SymphonyState | null): ReviewItem[] {
@@ -857,10 +886,11 @@ function dedupePacket(packet: ReviewPacket): ReviewPacket {
 function buildLanes(state: SymphonyState | null, board: BoardPayload | null): Lane[] {
   const activeRuntimeCards = state ? [...state.running.map(runningCard), ...state.retrying.map(retryCard)] : [];
   const activeRuntimeKeys = new Set(activeRuntimeCards.map((card) => card.issueId));
+  const completedByIssue = latestCompletedByIssue(state);
   const boardCards = board
     ? board.lanes.flatMap((lane) => lane.issues)
         .filter((issue) => !activeRuntimeKeys.has(issue.issue_id))
-        .map(boardIssueCard)
+        .map((issue) => boardIssueCard(issue, completedByIssue.get(issue.issue_id)))
     : [];
   const cards = [...activeRuntimeCards, ...boardCards];
   return laneMeta.map((lane) => ({
@@ -869,26 +899,41 @@ function buildLanes(state: SymphonyState | null, board: BoardPayload | null): La
   }));
 }
 
-function boardIssueCard(issue: BoardIssue): WorkCard {
-  const kind = stateToKind(issue.state);
+function latestCompletedByIssue(state: SymphonyState | null): Map<string, CompletedItem> {
+  const completedByIssue = new Map<string, CompletedItem>();
+  for (const item of (state?.completed ?? [])
+    .slice()
+    .sort((left, right) => new Date(right.completed_at).getTime() - new Date(left.completed_at).getTime())) {
+    if (!completedByIssue.has(item.issue_id)) {
+      completedByIssue.set(item.issue_id, item);
+    }
+  }
+  return completedByIssue;
+}
+
+function boardIssueCard(issue: BoardIssue, completed?: CompletedItem): WorkCard {
+  const kind = completed && isMergedCompletion(completed) ? "merged" : stateToKind(issue.state);
+  const workspace = completed?.workspace_path ?? "";
   return {
     key: `board:${issue.issue_id}`,
     kind,
     issueId: issue.issue_id,
     identifier: issue.issue_identifier,
     title: issue.title,
-    subtitle: issue.labels.length > 0 ? issue.labels.join(", ") : issue.state,
+    subtitle: kind === "merged" ? completed?.cleanup_outcome ?? "merged" : issue.labels.length > 0 ? issue.labels.join(", ") : issue.state,
     worker: kind === "ready-review" || kind === "reviewing" ? "reviewer" : "linear",
-    workspace: "",
+    workspace,
     primaryTime: issue.updated_at ? formatTime(issue.updated_at) : "-",
-    tokens: 0,
-    message: issue.description ?? "",
+    tokens: completed?.tokens.total_tokens ?? 0,
+    message: completed?.last_message ?? issue.description ?? "",
     state: issue.state,
-    status: "Linear",
+    status: kind === "merged" ? completed?.status ?? "Merged" : "Linear",
     details: [
       ["State", issue.state || "-"],
       ["Priority", issue.priority?.toString() ?? "-"],
       ["Branch", issue.branch_name ?? "-"],
+      ["Workspace", workspace || "-"],
+      ["Merge", completed?.status === "Merged" ? "merged" : completed?.cleanup_outcome ?? "-"],
       ["Labels", issue.labels.length > 0 ? issue.labels.join(", ") : "-"],
       ["Updated", issue.updated_at ? formatDate(issue.updated_at) : "-"],
       ["Created", issue.created_at ? formatDate(issue.created_at) : "-"]
@@ -912,6 +957,9 @@ function stateToKind(state: string): CardKind {
   }
   if (normalized === "blocked" || normalized === "canceled" || normalized === "cancelled") {
     return "blocked";
+  }
+  if (normalized === "merged") {
+    return "merged";
   }
   return "done";
 }
@@ -969,6 +1017,31 @@ function retryCard(item: RetryItem): WorkCard {
 }
 
 function completedCard(item: CompletedItem): WorkCard {
+  if (isMergedCompletion(item)) {
+    return {
+      key: `completed:${item.issue_id}`,
+      kind: "merged",
+      issueId: item.issue_id,
+      identifier: item.issue_identifier,
+      title: "Merged into checkout",
+      subtitle: item.cleanup_outcome || item.status,
+      worker: item.worker_host ?? "operator",
+      workspace: item.workspace_path ?? "",
+      primaryTime: formatTime(item.completed_at),
+      tokens: item.tokens.total_tokens,
+      message: item.last_message ?? "",
+      state: item.state,
+      status: item.status,
+      details: [
+        ["State", item.state || "-"],
+        ["Status", item.status || "-"],
+        ["Completed", formatDate(item.completed_at)],
+        ["Cleanup", item.cleanup_outcome || "-"],
+        ["Workspace", item.workspace_path ?? "-"]
+      ]
+    };
+  }
+
   const status = `${item.status} ${item.state} ${item.error ?? ""}`.toLowerCase();
   const blocked = status.includes("fail")
     || status.includes("block")
@@ -1001,6 +1074,14 @@ function completedCard(item: CompletedItem): WorkCard {
       ["Workspace", item.workspace_path ?? "-"]
     ]
   };
+}
+
+function isMergedCompletion(item: CompletedItem): boolean {
+  return item.status.toLowerCase() === "merged"
+    || item.status.toLowerCase() === "cleaned"
+    || item.cleanup_outcome.toLowerCase().includes("merged")
+    || item.cleanup_outcome.toLowerCase().includes("cleaned")
+    || item.state.toLowerCase() === "merged";
 }
 
 function isReviewer(item: RunningItem): boolean {

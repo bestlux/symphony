@@ -47,7 +47,8 @@ public static class HttpApi
                 SymphonyHostedService.ReadyForReviewState,
                 SymphonyHostedService.ReviewingState,
                 SymphonyHostedService.BlockedState,
-                SymphonyHostedService.DoneState
+                SymphonyHostedService.DoneState,
+                "Merged"
             };
             var issues = await tracker.FetchIssuesByStatesAsync(workflowStates, cancellationToken).ConfigureAwait(false);
             return Results.Json(new
@@ -170,6 +171,65 @@ public static class HttpApi
             await tracker.UpdateIssueStateAsync(issue_id, request.State, cancellationToken).ConfigureAwait(false);
             state.RecordIssueStateTransition(issue_id, $"Operator moved issue to {request.State}");
             return Results.Accepted(value: new { accepted = true, issue_id, state = request.State });
+        });
+
+        app.MapPost("/api/v1/issues/{issue_id}/merge", async (
+            string issue_id,
+            MergeWorkspaceRequest? request,
+            MergeWorkflowService merge,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var result = await merge.MergeAsync(
+                    issue_id,
+                    request?.CleanupWorkspace ?? false,
+                    request?.WorkspacePath,
+                    cancellationToken).ConfigureAwait(false);
+                return Results.Accepted(value: new
+                {
+                    accepted = true,
+                    issue_id = result.IssueId,
+                    issue_identifier = result.IssueIdentifier,
+                    workspace_path = result.WorkspacePath,
+                    commit_sha = result.CommitSha,
+                    cleanup_outcome = result.CleanupOutcome,
+                    changed_files = result.ChangedFiles,
+                    validation_output = result.ValidationOutput
+                });
+            }
+            catch (Exception ex)
+                when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+            {
+                return Results.BadRequest(new { error = new { code = "merge_failed", message = ex.Message } });
+            }
+        });
+
+        app.MapPost("/api/v1/workspaces/cleanup", async (
+            CleanupWorkspaceRequest request,
+            MergeWorkflowService merge,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var result = await merge.CleanupAsync(
+                    request.IssueId,
+                    request.WorkspacePath,
+                    request.Force,
+                    cancellationToken).ConfigureAwait(false);
+                return Results.Accepted(value: new
+                {
+                    accepted = true,
+                    issue_id = result.IssueId,
+                    workspace_path = result.WorkspacePath,
+                    cleanup_outcome = result.CleanupOutcome
+                });
+            }
+            catch (Exception ex)
+                when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+            {
+                return Results.BadRequest(new { error = new { code = "cleanup_failed", message = ex.Message } });
+            }
         });
 
         app.MapPost("/api/v1/workspaces/open", (OpenWorkspaceRequest request, ConfigBackedOptions options) =>
@@ -360,3 +420,17 @@ public sealed record UpdateIssueStateRequest(
 public sealed record OpenWorkspaceRequest(
     [property: System.Text.Json.Serialization.JsonPropertyName("path")]
     string Path);
+
+public sealed record MergeWorkspaceRequest(
+    [property: System.Text.Json.Serialization.JsonPropertyName("cleanup_workspace")]
+    bool CleanupWorkspace,
+    [property: System.Text.Json.Serialization.JsonPropertyName("workspace_path")]
+    string? WorkspacePath);
+
+public sealed record CleanupWorkspaceRequest(
+    [property: System.Text.Json.Serialization.JsonPropertyName("issue_id")]
+    string? IssueId,
+    [property: System.Text.Json.Serialization.JsonPropertyName("workspace_path")]
+    string? WorkspacePath,
+    [property: System.Text.Json.Serialization.JsonPropertyName("force")]
+    bool Force);
