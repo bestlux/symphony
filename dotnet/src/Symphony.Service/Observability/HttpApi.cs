@@ -1,6 +1,7 @@
 using Symphony.Service.Hosting;
 using Symphony.Abstractions.Issues;
 using Symphony.Abstractions.Tracking;
+using Symphony.Core.Configuration;
 
 namespace Symphony.Service.Observability;
 
@@ -31,7 +32,8 @@ public static class HttpApi
                 """, "text/html");
         });
 
-        app.MapGet("/api/v1/state", (RuntimeStateStore state) => Results.Json(ToStatePayload(state.Snapshot())));
+        app.MapGet("/api/v1/state", (RuntimeStateStore state, ConfigBackedOptions options) =>
+            Results.Json(ToStatePayload(state.Snapshot(), options.CurrentConfig().Observability)));
 
         app.MapGet("/api/v1/board", async (
             RuntimeStateStore state,
@@ -66,7 +68,7 @@ public static class HttpApi
                             runningByIssue.GetValueOrDefault(issue.Id),
                             completedByIssue.GetValueOrDefault(issue.Id)))
                 }),
-                runtime = ToStatePayload(snapshot),
+                runtime = ToStatePayload(snapshot, config.Observability),
                 dispatch_states = config.Tracker.DispatchStates,
                 active_states = config.Tracker.ActiveStates
             });
@@ -86,8 +88,9 @@ public static class HttpApi
             });
         });
 
-        app.MapGet("/api/v1/{issue_identifier}", (string issue_identifier, RuntimeStateStore state) =>
+        app.MapGet("/api/v1/{issue_identifier}", (string issue_identifier, RuntimeStateStore state, ConfigBackedOptions options) =>
         {
+            var config = options.CurrentConfig();
             var snapshot = state.Snapshot();
             var running = snapshot.Running.FirstOrDefault(entry => entry.IssueIdentifier.Equals(issue_identifier, StringComparison.OrdinalIgnoreCase));
             var retry = snapshot.Retrying.FirstOrDefault(entry => entry.IssueIdentifier.Equals(issue_identifier, StringComparison.OrdinalIgnoreCase));
@@ -113,7 +116,7 @@ public static class HttpApi
                     status = running?.WorkspaceStatus ?? retry?.WorkspaceStatus ?? completed?.WorkspaceStatus
                 },
                 attempts = new { restart_count = Math.Max((retry?.Attempt ?? 0) - 1, 0), current_retry_attempt = retry?.Attempt ?? 0 },
-                running = running is null ? null : RunningPayload(running),
+                running = running is null ? null : RunningPayload(running, config.Observability),
                 retry = retry is null ? null : RetryPayload(retry),
                 completed = completed is null ? null : CompletedPayload(completed),
                 logs = new { codex_session_logs = Array.Empty<object>() },
@@ -355,11 +358,11 @@ public static class HttpApi
         });
     }
 
-    private static object ToStatePayload(RuntimeSnapshot snapshot) => new
+    private static object ToStatePayload(RuntimeSnapshot snapshot, ObservabilityConfig observability) => new
     {
         generated_at = snapshot.GeneratedAt,
         counts = new { running = snapshot.Running.Count, retrying = snapshot.Retrying.Count, completed = snapshot.Completed.Count },
-        running = snapshot.Running.Select(RunningPayload),
+        running = snapshot.Running.Select(entry => RunningPayload(entry, observability)),
         retrying = snapshot.Retrying.Select(RetryPayload),
         completed = snapshot.Completed.Select(CompletedPayload),
         polling = new
@@ -367,6 +370,11 @@ public static class HttpApi
             in_progress = snapshot.Polling.InProgress,
             last_poll_at = snapshot.Polling.LastPollAt,
             next_poll_at = snapshot.Polling.NextPollAt
+        },
+        heartbeat = new
+        {
+            quiet_threshold_ms = observability.QuietThresholdMs,
+            stale_threshold_ms = observability.StaleThresholdMs
         },
         codex_totals = new
         {
@@ -378,34 +386,96 @@ public static class HttpApi
         rate_limits = snapshot.RateLimits
     };
 
-    private static object RunningPayload(RunningSession entry) => new
+    private static object RunningPayload(RunningSession entry, ObservabilityConfig observability)
     {
-        issue_id = entry.IssueId,
-        issue_identifier = entry.IssueIdentifier,
-        state = entry.State,
-        worker_host = entry.WorkerHost,
-        workspace_path = entry.WorkspacePath,
-        workspace_base_commit = entry.WorkspaceBaseCommit,
-        workspace_base_branch = entry.WorkspaceBaseBranch,
-        workspace_clean = entry.WorkspaceClean,
-        workspace_status = entry.WorkspaceStatus,
-        session_id = entry.SessionId,
-        thread_id = entry.ThreadId,
-        turn_id = entry.TurnId,
-        codex_app_server_pid = entry.CodexAppServerPid,
-        turn_count = entry.TurnCount,
-        retry_attempt = entry.RetryAttempt,
-        last_event = entry.LastEvent,
-        last_message = entry.LastMessage,
-        started_at = entry.StartedAt,
-        last_event_at = entry.LastEventAt,
-        tokens = new
+        var heartbeat = RunHeartbeat(entry, observability);
+        return new
         {
-            input_tokens = entry.InputTokens,
-            output_tokens = entry.OutputTokens,
-            total_tokens = entry.TotalTokens
+            issue_id = entry.IssueId,
+            issue_identifier = entry.IssueIdentifier,
+            state = entry.State,
+            worker_host = entry.WorkerHost,
+            workspace_path = entry.WorkspacePath,
+            workspace_base_commit = entry.WorkspaceBaseCommit,
+            workspace_base_branch = entry.WorkspaceBaseBranch,
+            workspace_clean = entry.WorkspaceClean,
+            workspace_status = entry.WorkspaceStatus,
+            session_id = entry.SessionId,
+            thread_id = entry.ThreadId,
+            turn_id = entry.TurnId,
+            codex_app_server_pid = entry.CodexAppServerPid,
+            turn_count = entry.TurnCount,
+            retry_attempt = entry.RetryAttempt,
+            last_event = entry.LastEvent,
+            last_message = entry.LastMessage,
+            last_meaningful_event_category = MeaningfulEventCategory(entry.LastEvent),
+            started_at = entry.StartedAt,
+            last_event_at = entry.LastEventAt,
+            heartbeat_at = heartbeat.Timestamp,
+            heartbeat_age_ms = heartbeat.AgeMs,
+            heartbeat_status = heartbeat.Status,
+            quiet_threshold_ms = observability.QuietThresholdMs,
+            stale_threshold_ms = observability.StaleThresholdMs,
+            stale = heartbeat.Stale,
+            tokens = new
+            {
+                input_tokens = entry.InputTokens,
+                output_tokens = entry.OutputTokens,
+                total_tokens = entry.TotalTokens
+            }
+        };
+    }
+
+    private static RunHeartbeatPayload RunHeartbeat(RunningSession entry, ObservabilityConfig observability)
+    {
+        var timestamp = entry.LastEventAt ?? entry.StartedAt;
+        var ageMs = Math.Max(0, (long)(DateTimeOffset.UtcNow - timestamp).TotalMilliseconds);
+        var status = ageMs <= observability.QuietThresholdMs
+            ? "Active"
+            : ageMs <= observability.StaleThresholdMs
+                ? "Quiet"
+                : "Stale";
+
+        return new RunHeartbeatPayload(timestamp, ageMs, status, string.Equals(status, "Stale", StringComparison.Ordinal));
+    }
+
+    private static string MeaningfulEventCategory(string? lastEvent)
+    {
+        if (string.IsNullOrWhiteSpace(lastEvent))
+        {
+            return "started";
         }
-    };
+
+        if (lastEvent.Contains("token", StringComparison.OrdinalIgnoreCase))
+        {
+            return "tokens";
+        }
+
+        if (lastEvent.Contains("tool", StringComparison.OrdinalIgnoreCase))
+        {
+            return "tool";
+        }
+
+        if (lastEvent.Contains("message", StringComparison.OrdinalIgnoreCase)
+            || lastEvent.Contains("response", StringComparison.OrdinalIgnoreCase))
+        {
+            return "message";
+        }
+
+        if (string.Equals(lastEvent, "stdout", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(lastEvent, "stderr", StringComparison.OrdinalIgnoreCase))
+        {
+            return "log";
+        }
+
+        return lastEvent;
+    }
+
+    private sealed record RunHeartbeatPayload(
+        DateTimeOffset Timestamp,
+        long AgeMs,
+        string Status,
+        bool Stale);
 
     private static object RetryPayload(RetryEntry entry) => new
     {

@@ -173,6 +173,28 @@ public sealed class CodexTokenAccountingTests
         Assert.Equal(125, running.TotalTokens);
     }
 
+    [Fact]
+    public void DuplicateRuntimeUpdatesDoNotRefreshMeaningfulHeartbeat()
+    {
+        var config = TestConfig();
+        var now = DateTimeOffset.UnixEpoch;
+        var orchestrator = new SymphonyOrchestrator(config, now);
+        var issue = Issue("issue-1", "IOM-1", "In Progress");
+        var first = new AccountingUpdate("stderr", now.AddSeconds(10), Message: "working");
+        var duplicate = first with { Timestamp = now.AddSeconds(20) };
+
+        orchestrator.ChooseDispatches(config, [issue], now);
+        orchestrator.IntegrateCodexUpdate(issue.Id, first);
+        orchestrator.IntegrateCodexUpdate(issue.Id, duplicate);
+        orchestrator.IntegrateCodexUpdate(issue.Id, TokenUpdate("thread-1", 100, 25, 125));
+        orchestrator.IntegrateCodexUpdate(issue.Id, TokenUpdate("thread-1", 100, 25, 125) with { Timestamp = now.AddSeconds(30) });
+
+        var running = Assert.Single(orchestrator.Snapshot().Running);
+        Assert.Equal("thread/tokenUsage/updated", running.LastCodexEvent);
+        Assert.Equal(DateTimeOffset.UnixEpoch, running.LastCodexTimestamp);
+        Assert.Equal(125, running.CodexTotalTokens);
+    }
+
     private static AccountingUpdate TokenUpdate(
         string threadId,
         long inputTokens,
@@ -204,7 +226,7 @@ public sealed class CodexTokenAccountingTests
             new AgentConfig(10, 20, 300_000, new Dictionary<string, int>()),
             new CodexConfig("codex app-server", new Dictionary<string, object?>(), "workspace-write", null, 3_600_000, 5_000, 300_000),
             new HooksConfig(null, null, null, null, 60_000),
-            new ObservabilityConfig(true, 1_000, 16),
+            new ObservabilityConfig(true, 1_000, 16, 120_000, 900_000),
             new ServerConfig(null, "127.0.0.1"));
     }
 

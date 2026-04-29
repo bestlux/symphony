@@ -52,8 +52,15 @@ type RunningItem = {
   retry_attempt?: number;
   last_event?: string;
   last_message?: string;
+  last_meaningful_event_category?: string;
   started_at: string;
   last_event_at?: string;
+  heartbeat_at?: string;
+  heartbeat_age_ms?: number;
+  heartbeat_status?: "Active" | "Quiet" | "Stale";
+  quiet_threshold_ms?: number;
+  stale_threshold_ms?: number;
+  stale?: boolean;
   tokens: Tokens;
 };
 
@@ -105,6 +112,10 @@ type SymphonyState = {
     in_progress: boolean;
     last_poll_at?: string;
     next_poll_at?: string;
+  };
+  heartbeat?: {
+    quiet_threshold_ms: number;
+    stale_threshold_ms: number;
   };
   codex_totals: {
     input_tokens: number;
@@ -250,7 +261,7 @@ type ReviewItem = {
   completed?: CompletedItem;
 };
 
-type RunState = "active" | "retrying" | "succeeded" | "failed" | "canceled" | "stale";
+type RunState = "active" | "quiet" | "retrying" | "succeeded" | "failed" | "canceled" | "stale";
 
 type RunItem = {
   key: string;
@@ -938,6 +949,10 @@ function RunsWorkspace({
             <span>Tokens</span>
             <strong>{formatNumber(state?.codex_totals.total_tokens ?? 0)}</strong>
           </div>
+          <div>
+            <span>Heartbeat</span>
+            <strong>{heartbeatConfigLabel(state)}</strong>
+          </div>
         </div>
 
         <div className="runs-grid">
@@ -1159,15 +1174,17 @@ function buildRunItems(state: SymphonyState | null): RunItem[] {
 }
 
 function runningRunItem(item: RunningItem, rateLimitStatus: string): RunItem {
-  const heartbeatAt = item.last_event_at ?? item.started_at;
-  const heartbeatAgeMs = ageMs(heartbeatAt);
-  const stale = heartbeatAgeMs === undefined || heartbeatAgeMs > 15 * 60 * 1000;
+  const heartbeatAt = item.heartbeat_at ?? item.last_event_at ?? item.started_at;
+  const heartbeatAgeMs = item.heartbeat_age_ms ?? ageMs(heartbeatAt);
+  const heartbeatStatus = item.heartbeat_status ?? localHeartbeatStatus(heartbeatAgeMs, item.quiet_threshold_ms, item.stale_threshold_ms);
+  const stale = item.stale ?? heartbeatStatus === "Stale";
+  const lifecycle = heartbeatStatus === "Quiet" ? "quiet" : stale ? "stale" : "active";
   return {
     key: `run:active:${item.issue_id}`,
     issueId: item.issue_id,
     identifier: item.issue_identifier,
-    lifecycle: stale ? "stale" : "active",
-    status: stale ? "stale" : "active",
+    lifecycle,
+    status: heartbeatStatus,
     state: item.state,
     worker: item.worker_host ?? "worker",
     workspace: item.workspace_path ?? "",
@@ -1176,7 +1193,7 @@ function runningRunItem(item: RunningItem, rateLimitStatus: string): RunItem {
     turnId: item.turn_id ?? "-",
     turnCount: item.turn_count,
     retryAttempt: item.retry_attempt ? String(item.retry_attempt) : "-",
-    lastEvent: item.last_event ?? "started",
+    lastEvent: item.last_meaningful_event_category ?? item.last_event ?? "started",
     lastMessage: item.last_message ?? "",
     heartbeatAt,
     heartbeatAgeMs,
@@ -1192,6 +1209,18 @@ function runningRunItem(item: RunningItem, rateLimitStatus: string): RunItem {
     stale,
     staleReason: stale ? staleReason("active run", heartbeatAgeMs, heartbeatAt) : ""
   };
+}
+
+function localHeartbeatStatus(
+  heartbeatAgeMs: number | undefined,
+  quietThresholdMs = 120_000,
+  staleThresholdMs = 900_000
+): "Active" | "Quiet" | "Stale" {
+  if (heartbeatAgeMs === undefined || heartbeatAgeMs > staleThresholdMs) {
+    return "Stale";
+  }
+
+  return heartbeatAgeMs > quietThresholdMs ? "Quiet" : "Active";
 }
 
 function retryRunItem(item: RetryItem, rateLimitStatus: string): RunItem {
@@ -1286,6 +1315,9 @@ function runTone(run: RunItem) {
   if (run.lifecycle === "retrying") {
     return "amber";
   }
+  if (run.lifecycle === "quiet") {
+    return "blue";
+  }
   if (run.lifecycle === "canceled") {
     return "slate";
   }
@@ -1306,6 +1338,14 @@ function pollingStatus(state: SymphonyState | null) {
   }
 
   return state.polling.last_poll_at ? `last ${formatTime(state.polling.last_poll_at)}` : "idle";
+}
+
+function heartbeatConfigLabel(state: SymphonyState | null) {
+  if (!state?.heartbeat) {
+    return "default thresholds";
+  }
+
+  return `quiet ${formatDuration(state.heartbeat.quiet_threshold_ms)}, stale ${formatDuration(state.heartbeat.stale_threshold_ms)}`;
 }
 
 function workspaceStatus(status?: string, clean?: boolean) {

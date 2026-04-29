@@ -78,7 +78,9 @@ public sealed partial class ConfigResolver
             new ObservabilityConfig(
                 BoolValue(observability, "dashboard_enabled", true),
                 PositiveInt(observability, "refresh_ms", 1_000),
-                PositiveInt(observability, "render_interval_ms", 16)),
+                PositiveInt(observability, "render_interval_ms", 16),
+                PositiveInt(observability, "quiet_threshold_ms", 120_000),
+                PositiveInt(observability, "stale_threshold_ms", 900_000)),
             new ServerConfig(
                 OptionalNonNegativeInt(server, "port"),
                 StringValue(server, "host") ?? "127.0.0.1"));
