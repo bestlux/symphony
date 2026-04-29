@@ -100,7 +100,7 @@ agent:
   max_concurrent_agents: 10
   max_turns: 20
 codex:
-  command: codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config "shell_environment_policy.set.PATH='C:\Users\iomancer\AppData\Local\Microsoft\WinGet\Links;C:\Program Files\Git\cmd;C:\Program Files\dotnet;C:\Program Files\PowerShell\7;C:\Program Files\nodejs;C:\Program Files\GitHub CLI;C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Windows\System32\OpenSSH;C:\Users\iomancer\AppData\Roaming\npm;C:\Users\iomancer\.dotnet\tools;C:\Users\iomancer\.cargo\bin;C:\Users\iomancer\AppData\Local\Microsoft\WindowsApps'" --config "shell_environment_policy.set.GH_REPO='bestlux/symphony'" --config model_reasoning_effort=xhigh --model gpt-5.5 app-server
+  command: codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config "shell_environment_policy.set.PATH='C:\Users\iomancer\AppData\Local\Microsoft\WinGet\Links;C:\Program Files\Git\cmd;C:\Program Files\dotnet;C:\Program Files\PowerShell\7;C:\Program Files\nodejs;C:\Program Files\GitHub CLI;C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Windows\System32\OpenSSH;C:\Users\iomancer\AppData\Roaming\npm;C:\Users\iomancer\.dotnet\tools;C:\Users\iomancer\.cargo\bin;C:\Users\iomancer\AppData\Local\Microsoft\WindowsApps'" --config "shell_environment_policy.set.GH_REPO='bestlux/symphony'" --config model_reasoning_effort=medium --model gpt-5.5 app-server
   approval_policy: never
   thread_sandbox: danger-full-access
   turn_sandbox_policy:
