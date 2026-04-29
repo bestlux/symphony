@@ -248,7 +248,7 @@ public sealed class MergeWorkflowService(
             throw new InvalidOperationException("Refusing to delete invalid workspace path.");
         }
 
-        Directory.Delete(workspace, recursive: true);
+        WorkspaceDirectory.Delete(workspace);
     }
 
     private static Task<CommandResult> RunGitAsync(string workingDirectory, string arguments, CancellationToken cancellationToken)
@@ -307,6 +307,39 @@ public sealed class MergeWorkflowService(
     }
 
     private static string Quote(string value) => "\"" + value.Replace("\"", "\\\"") + "\"";
+}
+
+internal static class WorkspaceDirectory
+{
+    public static void Delete(string workspace)
+    {
+        NormalizeAttributes(workspace);
+        Directory.Delete(workspace, recursive: true);
+    }
+
+    private static void NormalizeAttributes(string path)
+    {
+        if (!Directory.Exists(path))
+        {
+            return;
+        }
+
+        foreach (var entry in Directory.EnumerateFileSystemEntries(path, "*", SearchOption.AllDirectories))
+        {
+            try
+            {
+                File.SetAttributes(entry, FileAttributes.Normal);
+            }
+            catch (FileNotFoundException)
+            {
+            }
+            catch (DirectoryNotFoundException)
+            {
+            }
+        }
+
+        File.SetAttributes(path, FileAttributes.Normal);
+    }
 }
 
 public sealed record MergeWorkspaceResult(

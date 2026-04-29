@@ -268,6 +268,23 @@ public sealed class ElixirAlignedWorkflowTests
     }
 
     [Fact]
+    public void WorkspaceDirectoryDeleteClearsReadOnlyGitObjects()
+    {
+        using var temp = new TempDirectory();
+        var workspace = Path.Combine(temp.Path, "IOM-OBJECTS");
+        var objectDirectory = Path.Combine(workspace, ".git", "objects", "07");
+        Directory.CreateDirectory(objectDirectory);
+        var gitObject = Path.Combine(objectDirectory, "4ef966a32b86709105c3b410600d98a63f7e04");
+        File.WriteAllText(gitObject, "object", Encoding.UTF8);
+        File.SetAttributes(gitObject, FileAttributes.ReadOnly | FileAttributes.Archive);
+        File.SetAttributes(Path.Combine(workspace, ".git"), FileAttributes.Hidden | FileAttributes.Directory);
+
+        WorkspaceDirectory.Delete(workspace);
+
+        Assert.False(Directory.Exists(workspace));
+    }
+
+    [Fact]
     public void CompletedRunSchedulesContinuationWithoutTerminalTransition()
     {
         var config = TestConfig();
