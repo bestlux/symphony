@@ -137,6 +137,20 @@ public static class HttpApi
             });
         });
 
+        app.MapPost("/api/v1/service/restart", (ServiceRestartService restart) =>
+        {
+            var result = restart.RequestRestart();
+            return Results.Accepted(value: new
+            {
+                accepted = true,
+                restarting = true,
+                current_process_id = result.CurrentProcessId,
+                executable_path = result.ExecutablePath,
+                working_directory = result.WorkingDirectory,
+                requested_at = DateTimeOffset.UtcNow
+            });
+        });
+
         app.MapPost("/api/v1/runs/{issue_id}/stop", async (
             string issue_id,
             StopRunRequest? request,

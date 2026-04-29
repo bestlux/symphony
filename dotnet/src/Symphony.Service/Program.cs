@@ -74,6 +74,7 @@ static void ConfigureServices(IServiceCollection services, CliOptions options)
     services.AddSingleton<RuntimeStateStore>();
     services.AddSingleton<ManualRefreshSignal>();
     services.AddSingleton<DaemonControlService>();
+    services.AddSingleton<ServiceRestartService>();
     services.AddSingleton<MergeWorkflowService>();
     services.AddHostedService<SymphonyHostedService>();
     services.AddHostedService<ConsoleDashboard>();

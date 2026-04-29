@@ -14,6 +14,7 @@ import {
   ListChecks,
   MessageSquare,
   PlayCircle,
+  Power,
   RefreshCcw,
   RotateCcw,
   ShieldCheck,
@@ -212,6 +213,7 @@ function App() {
   const [selectedReviewKey, setSelectedReviewKey] = useState<string>("");
   const [busyAction, setBusyAction] = useState<string>("");
   const [error, setError] = useState<string>("");
+  const [restarting, setRestarting] = useState(false);
 
   async function load() {
     try {
@@ -267,6 +269,30 @@ function App() {
     }
   }
 
+  async function restartService() {
+    const running = state?.counts.running ?? 0;
+    const warning = running > 0
+      ? `Restart Symphony now? ${running} active run${running === 1 ? "" : "s"} will be interrupted.`
+      : "Restart Symphony now? The Operator will reconnect when the new service is online.";
+    if (!window.confirm(warning)) {
+      return;
+    }
+
+    try {
+      setBusyAction("restart-service");
+      setRestarting(true);
+      setError("");
+      await post("/api/v1/service/restart");
+      await waitForRestart();
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRestarting(false);
+      setBusyAction("");
+    }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -289,6 +315,9 @@ function App() {
             <StatusPill tone={health?.operator_actions_available ? "green" : "red"} label={health?.operator_actions_available ? "Actions ready" : "Disconnected"} />
             <StatusPill tone="blue" label="PR-first flow" />
             <StatusPill tone="slate" label={`${formatNumber(state?.codex_totals.total_tokens ?? 0)} tokens`} />
+            <button onClick={() => void restartService()} disabled={busyAction !== "" || restarting}>
+              <Power size={16} /> {restarting ? "Restarting" : "Restart"}
+            </button>
             <button onClick={() => runAction("refresh", () => post("/api/v1/refresh"))} disabled={busyAction !== ""}>
               <RefreshCcw size={16} /> Refresh
             </button>
@@ -665,6 +694,31 @@ async function post(url: string, body?: unknown): Promise<void> {
     }
     throw new Error(message);
   }
+}
+
+async function waitForRestart(): Promise<void> {
+  await delay(1500);
+  const deadline = Date.now() + 45_000;
+  let lastError = "";
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`/api/v1/health?restart=${Date.now()}`, { cache: "no-store" });
+      if (response.ok) {
+        return;
+      }
+      lastError = `health returned ${response.status}`;
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    }
+    await delay(1000);
+  }
+
+  throw new Error(`Service restart did not come back online within 45s${lastError ? ` (${lastError})` : ""}.`);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 async function moveIssue(issueId: string, state: string): Promise<void> {
