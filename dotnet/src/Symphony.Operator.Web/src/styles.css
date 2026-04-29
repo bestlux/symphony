@@ -347,6 +347,16 @@ button:disabled {
   font-size: 11px;
 }
 
+.token-count {
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.work-card.selected .token-count {
+  color: currentColor;
+}
+
 .empty-card {
   color: #94a3b8;
   font-size: 13px;
