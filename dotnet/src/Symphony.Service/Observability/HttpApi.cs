@@ -330,6 +330,12 @@ public static class HttpApi
         running = snapshot.Running.Select(RunningPayload),
         retrying = snapshot.Retrying.Select(RetryPayload),
         completed = snapshot.Completed.Select(CompletedPayload),
+        polling = new
+        {
+            in_progress = snapshot.Polling.InProgress,
+            last_poll_at = snapshot.Polling.LastPollAt,
+            next_poll_at = snapshot.Polling.NextPollAt
+        },
         codex_totals = new
         {
             input_tokens = snapshot.CodexTotals.InputTokens,
@@ -352,7 +358,11 @@ public static class HttpApi
         workspace_clean = entry.WorkspaceClean,
         workspace_status = entry.WorkspaceStatus,
         session_id = entry.SessionId,
+        thread_id = entry.ThreadId,
+        turn_id = entry.TurnId,
+        codex_app_server_pid = entry.CodexAppServerPid,
         turn_count = entry.TurnCount,
+        retry_attempt = entry.RetryAttempt,
         last_event = entry.LastEvent,
         last_message = entry.LastMessage,
         started_at = entry.StartedAt,

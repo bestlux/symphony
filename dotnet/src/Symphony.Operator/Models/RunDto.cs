@@ -34,8 +34,20 @@ public sealed record RunDto
     [JsonPropertyName("session_id")]
     public string? SessionId { get; init; }
 
+    [JsonPropertyName("thread_id")]
+    public string? ThreadId { get; init; }
+
+    [JsonPropertyName("turn_id")]
+    public string? TurnId { get; init; }
+
+    [JsonPropertyName("codex_app_server_pid")]
+    public string? CodexAppServerPid { get; init; }
+
     [JsonPropertyName("turn_count")]
     public int TurnCount { get; init; }
+
+    [JsonPropertyName("retry_attempt")]
+    public int? RetryAttempt { get; init; }
 
     [JsonPropertyName("last_event")]
     public string? LastEvent { get; init; }

@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   CircleDot,
   ClipboardCheck,
+  Clock,
   ExternalLink,
   FileText,
   FolderOpen,
@@ -37,8 +38,16 @@ type RunningItem = {
   state: string;
   worker_host?: string;
   workspace_path?: string;
+  workspace_base_commit?: string;
+  workspace_base_branch?: string;
+  workspace_clean?: boolean;
+  workspace_status?: string;
   session_id?: string;
+  thread_id?: string;
+  turn_id?: string;
+  codex_app_server_pid?: string;
   turn_count: number;
+  retry_attempt?: number;
   last_event?: string;
   last_message?: string;
   started_at: string;
@@ -54,6 +63,10 @@ type RetryItem = {
   error?: string;
   worker_host?: string;
   workspace_path?: string;
+  workspace_base_commit?: string;
+  workspace_base_branch?: string;
+  workspace_clean?: boolean;
+  workspace_status?: string;
 };
 
 type CompletedItem = {
@@ -86,12 +99,18 @@ type SymphonyState = {
   running: RunningItem[];
   retrying: RetryItem[];
   completed: CompletedItem[];
+  polling?: {
+    in_progress: boolean;
+    last_poll_at?: string;
+    next_poll_at?: string;
+  };
   codex_totals: {
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
     seconds_running: number;
   };
+  rate_limits?: unknown;
 };
 
 type Health = {
@@ -194,6 +213,40 @@ type ReviewItem = {
   completed?: CompletedItem;
 };
 
+type RunState = "active" | "retrying" | "succeeded" | "failed" | "canceled" | "stale";
+
+type RunItem = {
+  key: string;
+  issueId: string;
+  identifier: string;
+  lifecycle: RunState;
+  status: string;
+  state: string;
+  worker: string;
+  workspace: string;
+  sessionId: string;
+  threadId: string;
+  turnId: string;
+  turnCount: number;
+  retryAttempt: string;
+  lastEvent: string;
+  lastMessage: string;
+  heartbeatAt?: string;
+  heartbeatAgeMs?: number;
+  heartbeatLabel: string;
+  startedAt?: string;
+  completedAt?: string;
+  tokens: Tokens;
+  rateLimitStatus: string;
+  error: string;
+  workspaceStatus: string;
+  raw: unknown;
+  canStop: boolean;
+  canRetry: boolean;
+  stale: boolean;
+  staleReason: string;
+};
+
 const laneMeta: Array<Omit<Lane, "cards">> = [
   { key: "todo", name: "Todo", caption: "Queued", tone: "blue", icon: <CircleDot size={16} /> },
   { key: "in-progress", name: "In Progress", caption: "Agent implementation", tone: "green", icon: <PlayCircle size={16} /> },
@@ -208,7 +261,7 @@ function App() {
   const [board, setBoard] = useState<BoardPayload | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<"board" | "review">("board");
+  const [activeTab, setActiveTab] = useState<"board" | "review" | "runs">("board");
   const [selectedKey, setSelectedKey] = useState<string>("");
   const [selectedReviewKey, setSelectedReviewKey] = useState<string>("");
   const [busyAction, setBusyAction] = useState<string>("");
@@ -301,7 +354,7 @@ function App() {
           <button className={activeTab === "board" ? "active" : ""} onClick={() => setActiveTab("board")}><Workflow size={18} />Board</button>
           <button className={activeTab === "review" ? "active" : ""} onClick={() => setActiveTab("review")}><ShieldCheck size={18} />Review</button>
           <button disabled><GitBranch size={18} />Workspaces</button>
-          <button disabled><Timer size={18} />Runs</button>
+          <button className={activeTab === "runs" ? "active" : ""} onClick={() => setActiveTab("runs")}><Timer size={18} />Runs</button>
         </nav>
       </aside>
 
@@ -465,13 +518,20 @@ function App() {
               <div className="empty-inspector">No Symphony work selected.</div>
             )}
           </aside>
-        </div> : (
+        </div> : activeTab === "review" ? (
           <ReviewWorkspace
             items={reviewItems}
             selected={selectedReview}
             selectedKey={selectedReviewKey}
             busyAction={busyAction}
             onSelect={setSelectedReviewKey}
+            onAction={runAction}
+          />
+        ) : (
+          <RunsWorkspace
+            state={state}
+            health={health}
+            busyAction={busyAction}
             onAction={runAction}
           />
         )}
@@ -632,6 +692,179 @@ function ReviewWorkspace({
   );
 }
 
+function RunsWorkspace({
+  state,
+  health,
+  busyAction,
+  onAction
+}: {
+  state: SymphonyState | null;
+  health: Health | null;
+  busyAction: string;
+  onAction: (name: string, action: () => Promise<void>) => void;
+}) {
+  const runs = useMemo(() => buildRunItems(state), [state]);
+  const [selectedKey, setSelectedKey] = useState("");
+
+  useEffect(() => {
+    if ((!selectedKey || !runs.some((run) => run.key === selectedKey)) && runs.length > 0) {
+      setSelectedKey(runs[0].key);
+    }
+  }, [runs, selectedKey]);
+
+  const selected = runs.find((run) => run.key === selectedKey) ?? runs[0];
+  const staleCount = runs.filter((run) => run.stale).length;
+  const failedCount = runs.filter((run) => run.lifecycle === "failed" || run.lifecycle === "canceled").length;
+  const rateLimitStatus = describeRateLimits(state?.rate_limits);
+
+  return (
+    <section className="runs-workspace">
+      <div className="runs-main panel">
+        <div className="section-heading compact">
+          <div>
+            <h2>Runs</h2>
+            <p>Live sessions, retries, terminal runs, capacity, and telemetry.</p>
+          </div>
+          <div className="metric-row">
+            <Metric label="active" value={state?.counts.running ?? 0} />
+            <Metric label="retrying" value={state?.counts.retrying ?? 0} />
+            <Metric label="completed" value={state?.counts.completed ?? 0} />
+            <Metric label="stale" value={staleCount} />
+            <Metric label="failed" value={failedCount} />
+          </div>
+        </div>
+
+        <div className="run-health-strip">
+          <div>
+            <span>Operator</span>
+            <strong>{health?.operator_actions_available ? "controls bound" : "controls disconnected"}</strong>
+          </div>
+          <div>
+            <span>Poll</span>
+            <strong>{pollingStatus(state)}</strong>
+          </div>
+          <div>
+            <span>Rate limits</span>
+            <strong>{rateLimitStatus}</strong>
+          </div>
+          <div>
+            <span>Tokens</span>
+            <strong>{formatNumber(state?.codex_totals.total_tokens ?? 0)}</strong>
+          </div>
+        </div>
+
+        <div className="runs-grid">
+          <div className="run-row run-header">
+            <span>Status</span>
+            <span>Issue</span>
+            <span>Last meaningful event</span>
+            <span>Heartbeat</span>
+            <span>Worker</span>
+            <span>Tokens</span>
+            <span>Retry</span>
+          </div>
+          {runs.length === 0 ? (
+            <div className="empty-card">No run telemetry has been captured.</div>
+          ) : (
+            runs.map((run) => (
+              <button
+                key={run.key}
+                className={`run-row lifecycle-${run.lifecycle} ${run.stale ? "stale" : ""} ${selected?.key === run.key ? "selected" : ""}`}
+                onClick={() => setSelectedKey(run.key)}
+              >
+                <StatusPill tone={runTone(run)} label={run.status} />
+                <strong>{run.identifier}</strong>
+                <span>{run.lastEvent}</span>
+                <span>{run.heartbeatLabel}</span>
+                <span>{run.worker}</span>
+                <span>{formatNumber(run.tokens.total_tokens)}</span>
+                <span>{run.retryAttempt}</span>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+
+      <aside className="run-detail panel">
+        {selected ? (
+          <>
+            <div className="run-titlebar">
+              <div>
+                <p className="eyebrow">run selection</p>
+                <h2>{selected.identifier}</h2>
+                <p>{selected.status} - {selected.lastEvent}</p>
+              </div>
+              <StatusPill tone={runTone(selected)} label={selected.stale ? "stale" : selected.lifecycle} />
+            </div>
+
+            <div className="run-action-row">
+              <button onClick={() => openLinear(selected.identifier)}><ExternalLink size={15} />Open Linear</button>
+              <button onClick={() => onAction("open-workspace", () => openWorkspace(selected.workspace))} disabled={!selected.workspace || busyAction !== ""}><FolderOpen size={15} />Open Workspace</button>
+              <button
+                onClick={() => onAction("stop", () => post(`/api/v1/runs/${encodeURIComponent(selected.issueId)}/stop`, { cleanup_workspace: false }))}
+                disabled={!selected.canStop || busyAction !== ""}
+              >
+                <Square size={15} />Stop
+              </button>
+              <button
+                onClick={() => onAction("retry", () => post(`/api/v1/runs/${encodeURIComponent(selected.issueId)}/retry`))}
+                disabled={!selected.canRetry || busyAction !== ""}
+              >
+                <RotateCcw size={15} />Retry
+              </button>
+            </div>
+
+            {selected.stale && (
+              <div className="run-alert">
+                <AlertTriangle size={16} />
+                <strong>{selected.staleReason}</strong>
+              </div>
+            )}
+
+            <div className="run-meta-grid">
+              <RunFact icon={<Activity size={16} />} label="Lifecycle" value={selected.lifecycle} />
+              <RunFact icon={<Clock size={16} />} label="Heartbeat Age" value={selected.heartbeatLabel} />
+              <RunFact icon={<Timer size={16} />} label="Started" value={selected.startedAt ? formatDate(selected.startedAt) : "-"} />
+              <RunFact icon={<CheckCircle2 size={16} />} label="Completed" value={selected.completedAt ? formatDate(selected.completedAt) : "-"} />
+              <RunFact icon={<MessageSquare size={16} />} label="Session" value={selected.sessionId} />
+              <RunFact icon={<GitBranch size={16} />} label="Thread" value={selected.threadId} />
+              <RunFact icon={<ListChecks size={16} />} label="Turn" value={selected.turnId} />
+              <RunFact icon={<RefreshCcw size={16} />} label="Retry Attempt" value={selected.retryAttempt} />
+              <RunFact icon={<FolderOpen size={16} />} label="Workspace" value={selected.workspace || "-"} />
+              <RunFact icon={<ClipboardCheck size={16} />} label="Workspace Status" value={selected.workspaceStatus} />
+              <RunFact icon={<Activity size={16} />} label="Rate Limits" value={selected.rateLimitStatus} />
+              <RunFact icon={<FileText size={16} />} label="Error" value={selected.error || "None."} />
+            </div>
+
+            <div className="run-telemetry-grid">
+              <div className="message-box">
+                <h3>Last Meaningful Event</h3>
+                <pre>{selected.lastMessage || selected.lastEvent || "No event payload captured."}</pre>
+              </div>
+              <div className="message-box">
+                <h3>Raw Payload</h3>
+                <pre>{formatRawPayload(selected.raw)}</pre>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="empty-inspector">No run selected.</div>
+        )}
+      </aside>
+    </section>
+  );
+}
+
+function RunFact({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return (
+    <div className="run-fact">
+      {icon}
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
 function ReviewFact({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
     <div className="review-fact">
@@ -723,6 +956,283 @@ function delay(ms: number): Promise<void> {
 
 async function moveIssue(issueId: string, state: string): Promise<void> {
   await post(`/api/v1/issues/${encodeURIComponent(issueId)}/state`, { state });
+}
+
+function buildRunItems(state: SymphonyState | null): RunItem[] {
+  if (!state) {
+    return [];
+  }
+
+  const rateLimitStatus = describeRateLimits(state.rate_limits);
+  return [
+    ...state.running.map((item) => runningRunItem(item, rateLimitStatus)),
+    ...state.retrying.map((item) => retryRunItem(item, rateLimitStatus)),
+    ...state.completed.map((item) => completedRunItem(item, rateLimitStatus))
+  ].sort((left, right) => runSortTime(right) - runSortTime(left));
+}
+
+function runningRunItem(item: RunningItem, rateLimitStatus: string): RunItem {
+  const heartbeatAt = item.last_event_at ?? item.started_at;
+  const heartbeatAgeMs = ageMs(heartbeatAt);
+  const stale = heartbeatAgeMs === undefined || heartbeatAgeMs > 15 * 60 * 1000;
+  return {
+    key: `run:active:${item.issue_id}`,
+    issueId: item.issue_id,
+    identifier: item.issue_identifier,
+    lifecycle: stale ? "stale" : "active",
+    status: stale ? "stale" : "active",
+    state: item.state,
+    worker: item.worker_host ?? "worker",
+    workspace: item.workspace_path ?? "",
+    sessionId: item.session_id ?? "-",
+    threadId: item.thread_id ?? "-",
+    turnId: item.turn_id ?? "-",
+    turnCount: item.turn_count,
+    retryAttempt: item.retry_attempt ? String(item.retry_attempt) : "-",
+    lastEvent: item.last_event ?? "started",
+    lastMessage: item.last_message ?? "",
+    heartbeatAt,
+    heartbeatAgeMs,
+    heartbeatLabel: heartbeatLabel(heartbeatAgeMs, heartbeatAt),
+    startedAt: item.started_at,
+    tokens: item.tokens,
+    rateLimitStatus,
+    error: "",
+    workspaceStatus: workspaceStatus(item.workspace_status, item.workspace_clean),
+    raw: item,
+    canStop: true,
+    canRetry: true,
+    stale,
+    staleReason: stale ? staleReason("active run", heartbeatAgeMs, heartbeatAt) : ""
+  };
+}
+
+function retryRunItem(item: RetryItem, rateLimitStatus: string): RunItem {
+  const dueAgeMs = ageMs(item.due_at);
+  const overdueMs = dueAgeMs === undefined ? undefined : Math.max(0, dueAgeMs);
+  const stale = overdueMs !== undefined && overdueMs > 5 * 60 * 1000;
+  return {
+    key: `run:retry:${item.issue_id}:${item.attempt}`,
+    issueId: item.issue_id,
+    identifier: item.issue_identifier,
+    lifecycle: stale ? "stale" : "retrying",
+    status: stale ? "retry overdue" : "retrying",
+    state: "Retrying",
+    worker: item.worker_host ?? "worker",
+    workspace: item.workspace_path ?? "",
+    sessionId: "-",
+    threadId: "-",
+    turnId: "-",
+    turnCount: 0,
+    retryAttempt: String(item.attempt),
+    lastEvent: item.error ? "retry scheduled after failure" : "retry scheduled",
+    lastMessage: item.error ?? "",
+    heartbeatAt: item.due_at,
+    heartbeatAgeMs: dueAgeMs,
+    heartbeatLabel: retryDueLabel(item.due_at),
+    tokens: emptyTokens(),
+    rateLimitStatus,
+    error: item.error ?? "",
+    workspaceStatus: workspaceStatus(item.workspace_status, item.workspace_clean),
+    raw: item,
+    canStop: false,
+    canRetry: true,
+    stale,
+    staleReason: stale ? staleReason("retry", overdueMs, item.due_at) : ""
+  };
+}
+
+function completedRunItem(item: CompletedItem, rateLimitStatus: string): RunItem {
+  const lifecycle = completedLifecycle(item.status);
+  return {
+    key: `run:completed:${item.issue_id}:${item.completed_at}`,
+    issueId: item.issue_id,
+    identifier: item.issue_identifier,
+    lifecycle,
+    status: item.status || lifecycle,
+    state: item.state,
+    worker: item.worker_host ?? "worker",
+    workspace: item.workspace_path ?? "",
+    sessionId: item.session_id ?? "-",
+    threadId: item.thread_id ?? "-",
+    turnId: item.turn_id ?? "-",
+    turnCount: item.turn_count,
+    retryAttempt: "-",
+    lastEvent: item.last_event ?? item.status,
+    lastMessage: item.last_message ?? item.error ?? "",
+    heartbeatAt: item.completed_at,
+    heartbeatAgeMs: ageMs(item.completed_at),
+    heartbeatLabel: item.completed_at ? `${formatDuration(ageMs(item.completed_at) ?? 0)} ago` : "-",
+    startedAt: item.started_at,
+    completedAt: item.completed_at,
+    tokens: item.tokens,
+    rateLimitStatus,
+    error: item.error ?? "",
+    workspaceStatus: workspaceStatus(item.workspace_status, item.workspace_clean),
+    raw: item,
+    canStop: false,
+    canRetry: false,
+    stale: false,
+    staleReason: ""
+  };
+}
+
+function completedLifecycle(status: string): RunState {
+  const normalized = status.toLowerCase();
+  if (normalized.includes("cancel")) {
+    return "canceled";
+  }
+  if (normalized.includes("fail") || normalized.includes("stall") || normalized.includes("timeout")) {
+    return "failed";
+  }
+  return "succeeded";
+}
+
+function runSortTime(run: RunItem): number {
+  return new Date(run.completedAt ?? run.heartbeatAt ?? run.startedAt ?? 0).getTime();
+}
+
+function runTone(run: RunItem) {
+  if (run.stale || run.lifecycle === "failed") {
+    return "red";
+  }
+  if (run.lifecycle === "retrying") {
+    return "amber";
+  }
+  if (run.lifecycle === "canceled") {
+    return "slate";
+  }
+  return "green";
+}
+
+function pollingStatus(state: SymphonyState | null) {
+  if (!state?.polling) {
+    return "not reported";
+  }
+
+  if (state.polling.in_progress) {
+    return "polling now";
+  }
+
+  if (state.polling.next_poll_at) {
+    return `next ${formatTime(state.polling.next_poll_at)}`;
+  }
+
+  return state.polling.last_poll_at ? `last ${formatTime(state.polling.last_poll_at)}` : "idle";
+}
+
+function workspaceStatus(status?: string, clean?: boolean) {
+  const state = status?.trim() || "unknown";
+  if (clean === undefined) {
+    return state;
+  }
+  return `${state}; ${clean ? "clean" : "dirty or unknown"}`;
+}
+
+function ageMs(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? undefined : Date.now() - time;
+}
+
+function heartbeatLabel(value?: number, timestamp?: string) {
+  if (!timestamp || value === undefined) {
+    return "no heartbeat";
+  }
+
+  if (value < 0) {
+    return `in ${formatDuration(Math.abs(value))}`;
+  }
+
+  return `${formatDuration(value)} ago`;
+}
+
+function retryDueLabel(value: string) {
+  const dueAge = ageMs(value);
+  if (dueAge === undefined) {
+    return "-";
+  }
+
+  return dueAge < 0
+    ? `due in ${formatDuration(Math.abs(dueAge))}`
+    : `due ${formatDuration(dueAge)} ago`;
+}
+
+function staleReason(subject: string, age: number | undefined, timestamp?: string) {
+  if (!timestamp || age === undefined) {
+    return `${subject} has no heartbeat timestamp.`;
+  }
+
+  return `${subject} has had no fresh signal for ${formatDuration(age)}.`;
+}
+
+function formatDuration(ms: number) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+
+function describeRateLimits(rateLimits: unknown) {
+  if (!rateLimits) {
+    return "no signal";
+  }
+
+  const record = asRecord(rateLimits);
+  const updated = stringValue(record?.updatedAt) ?? stringValue(record?.updated_at);
+  const values = asRecord(record?.values ?? record?.Values);
+  const summary = values
+    ? Object.entries(values)
+        .slice(0, 2)
+        .map(([key, value]) => `${humanizeRateLimitKey(key)} ${summarizeUnknown(value)}`)
+        .join("; ")
+    : "";
+
+  return [updated ? `updated ${formatTime(updated)}` : "reported", summary].filter(Boolean).join(" - ");
+}
+
+function humanizeRateLimitKey(value: string) {
+  return value
+    .replaceAll("_", " ")
+    .replaceAll("-", " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function summarizeUnknown(value: unknown) {
+  const record = asRecord(value);
+  const unwrapped = record && ("value" in record || "Value" in record)
+    ? record.value ?? record.Value
+    : value;
+  if (typeof unwrapped === "string" || typeof unwrapped === "number" || typeof unwrapped === "boolean") {
+    return String(unwrapped);
+  }
+  return JSON.stringify(unwrapped);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value : undefined;
+}
+
+function formatRawPayload(value: unknown) {
+  return JSON.stringify(value, null, 2) ?? "";
 }
 
 function buildReviewItems(board: BoardPayload | null, state: SymphonyState | null): ReviewItem[] {
@@ -1109,8 +1619,12 @@ function runningCard(item: RunningItem): WorkCard {
       ...tokenDetails(item.tokens),
       ["Worker", item.worker_host ?? "-"],
       ["Session", item.session_id ?? "-"],
+      ["Thread", item.thread_id ?? "-"],
+      ["Turn", item.turn_id ?? "-"],
+      ["Retry", item.retry_attempt ? String(item.retry_attempt) : "-"],
       ["Started", formatDate(item.started_at)],
       ["Last event", item.last_event ?? "-"],
+      ["Heartbeat", heartbeatLabel(ageMs(item.last_event_at ?? item.started_at), item.last_event_at ?? item.started_at)],
       ["Workspace", item.workspace_path ?? "-"]
     ]
   };
