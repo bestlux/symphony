@@ -22,11 +22,16 @@ description:
 - You are on the PR branch with a clean or intentionally committable working
   tree.
 - The Linear issue is in `Merging`.
+- A PR exists for the issue branch. If no PR or branch exists, update the
+  workpad with the failed landing preflight and move the Linear issue to
+  `Rework`, not `Human Review`.
 
 ## Steps
 
 1. Set `GH_REPO=bestlux/symphony`.
-2. Locate the PR for the current branch.
+2. Locate the PR for the current branch. If it does not exist, this is not a
+   human-review wait condition; move the issue to `Rework` so implementation can
+   recreate the branch/PR handoff.
 3. If local changes exist, run the `commit` skill and then the `push` skill.
 4. Run `.\scripts\validate-symphony.ps1`.
 5. Validate the live PR body with `.\scripts\check-pr-body.ps1`.

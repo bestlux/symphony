@@ -38,7 +38,12 @@ hooks:
     git clone --no-local --branch $baseBranch --single-branch $source .
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    git remote remove upstream 2>$null
+    git remote get-url upstream *> $null
+    if ($LASTEXITCODE -eq 0) {
+      git remote remove upstream
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+
     git remote add upstream https://github.com/openai/symphony.git
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -95,11 +100,11 @@ agent:
   max_concurrent_agents: 10
   max_turns: 20
 codex:
-  command: codex --config shell_environment_policy.inherit=all --config "shell_environment_policy.set.PATH='C:\Users\iomancer\AppData\Local\Microsoft\WinGet\Links;C:\Program Files\Git\cmd;C:\Program Files\dotnet;C:\Program Files\PowerShell\7;C:\Program Files\nodejs;C:\Program Files\GitHub CLI;C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Windows\System32\OpenSSH;C:\Users\iomancer\AppData\Roaming\npm;C:\Users\iomancer\.dotnet\tools;C:\Users\iomancer\.cargo\bin;C:\Users\iomancer\AppData\Local\Microsoft\WindowsApps'" --config "shell_environment_policy.set.GH_REPO='bestlux/symphony'" --config model_reasoning_effort=xhigh --model gpt-5.5 app-server
+  command: codex --dangerously-bypass-approvals-and-sandbox --config shell_environment_policy.inherit=all --config "shell_environment_policy.set.PATH='C:\Users\iomancer\AppData\Local\Microsoft\WinGet\Links;C:\Program Files\Git\cmd;C:\Program Files\dotnet;C:\Program Files\PowerShell\7;C:\Program Files\nodejs;C:\Program Files\GitHub CLI;C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Windows\System32\OpenSSH;C:\Users\iomancer\AppData\Roaming\npm;C:\Users\iomancer\.dotnet\tools;C:\Users\iomancer\.cargo\bin;C:\Users\iomancer\AppData\Local\Microsoft\WindowsApps'" --config "shell_environment_policy.set.GH_REPO='bestlux/symphony'" --config model_reasoning_effort=xhigh --model gpt-5.5 app-server
   approval_policy: never
-  thread_sandbox: workspace-write
+  thread_sandbox: danger-full-access
   turn_sandbox_policy:
-    type: workspaceWrite
+    type: dangerFullAccess
 ---
 
 You are working on a Linear ticket `{{ issue.identifier }}` for the .NET Symphony implementation.
@@ -273,5 +278,6 @@ Use this only for missing required auth, permissions, secrets, or tools after fa
 If blocked:
 
 1. Update the workpad with what is missing, why it blocks completion, and the exact unblock action.
-2. Move the issue to `Human Review`.
-3. Final response reports the blocker only.
+2. If the current state is `In Progress`, `Rework`, or `Merging`, move the issue to `Rework` so the next run repairs the handoff instead of presenting it as reviewable.
+3. Move the issue to `Human Review` only when a PR exists, validation evidence exists, and the remaining action is genuinely human approval.
+4. Final response reports the blocker only.
