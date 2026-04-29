@@ -139,7 +139,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public string SelectedIssueId => SelectedRun?.IssueId ?? SelectedRetry?.IssueId ?? SelectedCompleted?.IssueId ?? "";
     public string SelectedWorkspace => SelectedRun?.WorkspacePath ?? SelectedRetry?.WorkspacePath ?? SelectedCompleted?.WorkspacePath ?? "";
     public string SelectedBaseline => SelectionBaseline();
-    public string SelectedLastMessage => SelectedRun?.LastMessage ?? SelectedRetry?.Error ?? SelectedCompletedSummary();
+    public string SelectedLastMessage => SelectedRun is not null
+        ? SelectedRunSummary()
+        : SelectedRetry?.Error ?? SelectedCompletedSummary();
 
     public void Dispose()
     {
@@ -177,7 +179,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             Replace(Completed, state.Completed);
             RestoreSelection(selectedRunIssueId, selectedRetryIssueId, selectedCompletedIssueId);
             ConnectionStatus = health is null ? "Connected" : $"Connected - actions {(health.OperatorActionsAvailable ? "ready" : "not ready")}";
-            PollingStatus = $"Running {state.Counts.Running} | Retrying {state.Counts.Retrying} | Completed {state.Counts.Completed} | Generated {state.GeneratedAt:T}";
+            var staleCount = state.Running.Count(run => run.Stale);
+            PollingStatus = $"Running {state.Counts.Running} | Stale {staleCount} | Retrying {state.Counts.Retrying} | Completed {state.Counts.Completed} | Generated {state.GeneratedAt:T}";
             TokenSummary = $"Tokens {state.CodexTotals.TotalTokens:N0} in {state.CodexTotals.SecondsRunning:N0}s";
             RecentLogs = logs;
             LastError = "";
@@ -317,6 +320,22 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             $"Tokens: {SelectedCompleted.Tokens.TotalTokens:N0}",
             $"Last event: {SelectedCompleted.LastEvent ?? "-"}",
             $"Message: {SelectedCompleted.LastMessage ?? SelectedCompleted.Error ?? "-"}");
+    }
+
+    private string SelectedRunSummary()
+    {
+        if (SelectedRun is null)
+        {
+            return "";
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            $"Heartbeat: {SelectedRun.HeartbeatStatus ?? "-"} ({SelectedRun.HeartbeatAge})",
+            $"Last meaningful category: {SelectedRun.LastMeaningfulEventCategory ?? "-"}",
+            $"Last event: {SelectedRun.LastEvent ?? "-"}",
+            $"Message: {SelectedRun.LastMessage ?? "-"}",
+            $"Thresholds: quiet {SelectedRun.QuietThresholdMs ?? 0:N0}ms, stale {SelectedRun.StaleThresholdMs ?? 0:N0}ms");
     }
 
     private string SelectionBaseline()

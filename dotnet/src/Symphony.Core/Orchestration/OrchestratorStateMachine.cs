@@ -370,7 +370,11 @@ public sealed class OrchestratorStateMachine
             state.CodexRateLimits = update.RateLimits;
         }
 
-        var meaningfulActivity = IsMeaningfulActivity(update);
+        var tokenUsageAdvanced = usage is not null
+            && (inputTokens > running.CodexInputTokens
+                || outputTokens > running.CodexOutputTokens
+                || totalTokens > running.CodexTotalTokens);
+        var meaningfulActivity = IsMeaningfulActivity(update, running, tokenUsageAdvanced);
         state.Running[issueId] = running with
         {
             SessionId = update.SessionId ?? ComposeSessionId(update.ThreadId, update.TurnId) ?? running.SessionId,
@@ -587,15 +591,26 @@ public sealed class OrchestratorStateMachine
             : $"{threadId}-{turnId}";
     }
 
-    private static bool IsMeaningfulActivity(CodexRuntimeUpdate update)
+    private static bool IsMeaningfulActivity(CodexRuntimeUpdate update, RunningIssue running, bool tokenUsageAdvanced)
     {
-        if (update.TokenUsage is not null)
+        if (tokenUsageAdvanced)
         {
             return true;
         }
 
+        if (update.TokenUsage is not null)
+        {
+            return false;
+        }
+
         if (string.Equals(update.Event, "stderr", StringComparison.Ordinal)
             && update.Message?.Contains("ignoring interface.defaultPrompt", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return false;
+        }
+
+        if (string.Equals(update.Event, running.LastCodexEvent, StringComparison.Ordinal)
+            && string.Equals(update.Message, running.LastCodexMessage, StringComparison.Ordinal))
         {
             return false;
         }

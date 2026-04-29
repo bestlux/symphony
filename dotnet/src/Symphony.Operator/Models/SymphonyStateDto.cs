@@ -22,6 +22,9 @@ public sealed record SymphonyStateDto
     [JsonPropertyName("polling")]
     public PollingDto Polling { get; init; } = new();
 
+    [JsonPropertyName("heartbeat")]
+    public HeartbeatConfigDto Heartbeat { get; init; } = new();
+
     [JsonPropertyName("codex_totals")]
     public CodexTotalsDto CodexTotals { get; init; } = new();
 
@@ -51,6 +54,15 @@ public sealed record PollingDto
 
     [JsonPropertyName("next_poll_at")]
     public DateTimeOffset? NextPollAt { get; init; }
+}
+
+public sealed record HeartbeatConfigDto
+{
+    [JsonPropertyName("quiet_threshold_ms")]
+    public int QuietThresholdMs { get; init; }
+
+    [JsonPropertyName("stale_threshold_ms")]
+    public int StaleThresholdMs { get; init; }
 }
 
 public sealed record CodexTotalsDto

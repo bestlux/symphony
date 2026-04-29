@@ -54,7 +54,9 @@ public sealed record HooksConfig(
 public sealed record ObservabilityConfig(
     bool DashboardEnabled,
     int RefreshMs,
-    int RenderIntervalMs);
+    int RenderIntervalMs,
+    int QuietThresholdMs,
+    int StaleThresholdMs);
 
 public sealed record ServerConfig(
     int? Port,

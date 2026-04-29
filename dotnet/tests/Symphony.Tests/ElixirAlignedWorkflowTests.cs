@@ -449,7 +449,7 @@ public sealed class ElixirAlignedWorkflowTests
             new AgentConfig(10, 20, 300_000, new Dictionary<string, int>()),
             new CodexConfig("codex app-server", new Dictionary<string, object?>(), "workspace-write", null, 3_600_000, 5_000, 300_000),
             new HooksConfig(null, null, null, null, 60_000),
-            new ObservabilityConfig(true, 1_000, 16),
+            new ObservabilityConfig(true, 1_000, 16, 120_000, 900_000),
             new ServerConfig(null, "127.0.0.1"));
     }
 

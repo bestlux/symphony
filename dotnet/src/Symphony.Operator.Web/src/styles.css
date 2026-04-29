@@ -992,7 +992,7 @@ button.workspace-row {
 
 .run-health-strip {
   display: grid;
-  grid-template-columns: 0.8fr 0.8fr 1.4fr 0.7fr;
+  grid-template-columns: 0.8fr 0.8fr 1.4fr 0.7fr 1fr;
   gap: 8px;
   margin-bottom: 12px;
 }
