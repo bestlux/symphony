@@ -439,6 +439,64 @@ button:disabled {
   font-size: 12px;
 }
 
+.activity-summary {
+  min-height: 126px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+  font-size: 13px;
+}
+
+.activity-summary > strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #0f172a;
+}
+
+.activity-summary dl {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 6px 10px;
+  margin: 0;
+}
+
+.activity-summary dt {
+  color: #64748b;
+}
+
+.activity-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.activity-summary p {
+  margin: 0;
+  color: #64748b;
+}
+
+.activity-summary details {
+  margin-top: 10px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 8px;
+}
+
+.activity-summary summary {
+  cursor: pointer;
+  color: #334155;
+  font-weight: 600;
+}
+
+.activity-summary button {
+  margin: 8px 0;
+}
+
+.activity-summary details pre {
+  min-height: 0;
+  max-height: 180px;
+  background: #ffffff;
+}
+
 .empty-inspector {
   color: #64748b;
   border: 1px dashed #cbd5e1;
