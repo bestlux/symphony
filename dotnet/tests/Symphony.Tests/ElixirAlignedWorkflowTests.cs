@@ -211,6 +211,62 @@ public sealed class ElixirAlignedWorkflowTests
         Assert.Contains("completed workpad", packet.Missing);
     }
 
+    [Theory]
+    [InlineData("Todo")]
+    [InlineData("In Progress")]
+    [InlineData("Merging")]
+    [InlineData("Rework")]
+    public void WorkspaceCleanupPolicyNeverCleansActiveStates(string state)
+    {
+        var decision = WorkspaceCleanupPolicy.Evaluate(
+            state,
+            pathExists: true,
+            retained: false,
+            hasDurableArtifacts: true);
+
+        Assert.False(decision.CanCleanup);
+        Assert.Equal("blocked", decision.Outcome);
+        Assert.Contains("active", decision.BlockedReason);
+    }
+
+    [Fact]
+    public void WorkspaceCleanupPolicyRetainsHumanReview()
+    {
+        var decision = WorkspaceCleanupPolicy.Evaluate(
+            "Human Review",
+            pathExists: true,
+            retained: false,
+            hasDurableArtifacts: true);
+
+        Assert.False(decision.CanCleanup);
+        Assert.Equal("retained", decision.Outcome);
+        Assert.Contains("Human Review", decision.BlockedReason);
+    }
+
+    [Theory]
+    [InlineData("Done")]
+    [InlineData("Duplicate")]
+    [InlineData("Canceled")]
+    [InlineData("Cancelled")]
+    public void WorkspaceCleanupPolicyRequiresArtifactsForTerminalStates(string state)
+    {
+        var missingArtifacts = WorkspaceCleanupPolicy.Evaluate(
+            state,
+            pathExists: true,
+            retained: false,
+            hasDurableArtifacts: false);
+        var withArtifacts = WorkspaceCleanupPolicy.Evaluate(
+            state,
+            pathExists: true,
+            retained: false,
+            hasDurableArtifacts: true);
+
+        Assert.False(missingArtifacts.CanCleanup);
+        Assert.Contains("artifacts", missingArtifacts.BlockedReason);
+        Assert.True(withArtifacts.CanCleanup);
+        Assert.Equal("eligible", withArtifacts.Outcome);
+    }
+
     [Fact]
     public void CompletedRunSchedulesContinuationWithoutTerminalTransition()
     {

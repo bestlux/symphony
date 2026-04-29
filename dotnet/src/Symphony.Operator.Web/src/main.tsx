@@ -11,6 +11,7 @@ import {
   FileText,
   FolderOpen,
   GitBranch,
+  HardDrive,
   Link as LinkIcon,
   ListChecks,
   MessageSquare,
@@ -21,6 +22,7 @@ import {
   ShieldCheck,
   Square,
   Timer,
+  Trash2,
   Workflow,
   XCircle
 } from "lucide-react";
@@ -151,6 +153,41 @@ type BoardPayload = {
   active_states: string[];
 };
 
+type WorkspaceInventoryItem = {
+  issue_id?: string;
+  issue_identifier: string;
+  title: string;
+  state: string;
+  workspace_path?: string;
+  worker_host?: string;
+  branch?: string;
+  pr_url?: string;
+  workpad_status: string;
+  git_clean?: boolean;
+  git_status?: string;
+  disk_bytes?: number;
+  last_activity?: string;
+  source: string;
+  path_exists: boolean;
+  retained: boolean;
+  retained_reason?: string;
+  retained_at?: string;
+  has_run_artifact: boolean;
+  has_pr_artifact: boolean;
+  has_workpad_artifact: boolean;
+  has_durable_artifacts: boolean;
+  can_cleanup: boolean;
+  cleanup_outcome: string;
+  cleanup_blocked_reason: string;
+  issue_url?: string;
+};
+
+type WorkspaceInventoryPayload = {
+  generated_at: string;
+  workspace_root: string;
+  items: WorkspaceInventoryItem[];
+};
+
 type CardKind = "todo" | "in-progress" | "human-review" | "merging" | "rework" | "done";
 
 type WorkCard = {
@@ -261,7 +298,8 @@ function App() {
   const [board, setBoard] = useState<BoardPayload | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<"board" | "review" | "runs">("board");
+  const [workspaces, setWorkspaces] = useState<WorkspaceInventoryPayload | null>(null);
+  const [activeTab, setActiveTab] = useState<"board" | "review" | "workspaces" | "runs">("board");
   const [selectedKey, setSelectedKey] = useState<string>("");
   const [selectedReviewKey, setSelectedReviewKey] = useState<string>("");
   const [busyAction, setBusyAction] = useState<string>("");
@@ -276,10 +314,12 @@ function App() {
         fetchJson<Health>("/api/v1/health"),
         fetchJson<{ lines: string[] }>("/api/v1/logs/recent?count=120")
       ]);
+      const nextWorkspaces = await fetchJson<WorkspaceInventoryPayload>("/api/v1/workspaces");
       setBoard(nextBoard);
       setState(nextBoard.runtime);
       setHealth(nextHealth);
       setLogs(nextLogs.lines ?? []);
+      setWorkspaces(nextWorkspaces);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -353,7 +393,7 @@ function App() {
         <nav>
           <button className={activeTab === "board" ? "active" : ""} onClick={() => setActiveTab("board")}><Workflow size={18} />Board</button>
           <button className={activeTab === "review" ? "active" : ""} onClick={() => setActiveTab("review")}><ShieldCheck size={18} />Review</button>
-          <button disabled><GitBranch size={18} />Workspaces</button>
+          <button className={activeTab === "workspaces" ? "active" : ""} onClick={() => setActiveTab("workspaces")}><HardDrive size={18} />Workspaces</button>
           <button className={activeTab === "runs" ? "active" : ""} onClick={() => setActiveTab("runs")}><Timer size={18} />Runs</button>
         </nav>
       </aside>
@@ -527,6 +567,12 @@ function App() {
             onSelect={setSelectedReviewKey}
             onAction={runAction}
           />
+        ) : activeTab === "workspaces" ? (
+          <WorkspacesWorkspace
+            inventory={workspaces}
+            busyAction={busyAction}
+            onAction={runAction}
+          />
         ) : (
           <RunsWorkspace
             state={state}
@@ -689,6 +735,147 @@ function ReviewWorkspace({
         )}
       </div>
     </section>
+  );
+}
+
+function WorkspacesWorkspace({
+  inventory,
+  busyAction,
+  onAction
+}: {
+  inventory: WorkspaceInventoryPayload | null;
+  busyAction: string;
+  onAction: (name: string, action: () => Promise<void>) => void;
+}) {
+  const items = inventory?.items ?? [];
+  const [selectedKey, setSelectedKey] = useState("");
+
+  useEffect(() => {
+    if ((!selectedKey || !items.some((item) => workspaceKey(item) === selectedKey)) && items.length > 0) {
+      setSelectedKey(workspaceKey(items[0]));
+    }
+  }, [items, selectedKey]);
+
+  const selected = items.find((item) => workspaceKey(item) === selectedKey) ?? items[0];
+  const eligible = items.filter((item) => item.can_cleanup).length;
+  const retained = items.filter((item) => !item.can_cleanup).length;
+  const totalBytes = items.reduce((sum, item) => sum + (item.disk_bytes ?? 0), 0);
+
+  return (
+    <section className="workspaces-workspace">
+      <div className="workspaces-main panel">
+        <div className="section-heading compact">
+          <div>
+            <h2>Workspaces</h2>
+            <p>Local workspace inventory, durable artifacts, and cleanup decisions.</p>
+          </div>
+          <div className="metric-row">
+            <Metric label="workspaces" value={items.length} />
+            <Metric label="eligible" value={eligible} />
+            <Metric label="retained" value={retained} />
+            <Metric label="disk" value={formatBytes(totalBytes)} />
+          </div>
+        </div>
+
+        <div className="workspace-root-strip">
+          <span>Root</span>
+          <strong>{inventory?.workspace_root ?? "-"}</strong>
+          <span>Generated</span>
+          <strong>{inventory ? formatTime(inventory.generated_at) : "-"}</strong>
+        </div>
+
+        <div className="workspace-table">
+          <div className="workspace-row workspace-header">
+            <span>Decision</span>
+            <span>Issue</span>
+            <span>State</span>
+            <span>Artifacts</span>
+            <span>Git</span>
+            <span>Disk</span>
+            <span>Activity</span>
+          </div>
+          {items.length === 0 ? (
+            <div className="empty-card">No workspaces found under the configured root or recent run history.</div>
+          ) : (
+            items.map((item) => (
+              <button
+                key={workspaceKey(item)}
+                className={`workspace-row ${item.can_cleanup ? "cleanup-ready" : "cleanup-blocked"} ${selected && workspaceKey(selected) === workspaceKey(item) ? "selected" : ""}`}
+                onClick={() => setSelectedKey(workspaceKey(item))}
+              >
+                <StatusPill tone={item.can_cleanup ? "green" : item.retained ? "amber" : "slate"} label={item.cleanup_outcome} />
+                <strong>{item.issue_identifier}</strong>
+                <span>{item.state}</span>
+                <span>{artifactSummary(item)}</span>
+                <span>{gitSummary(item)}</span>
+                <span>{formatBytes(item.disk_bytes ?? 0)}</span>
+                <span>{item.last_activity ? formatDate(item.last_activity) : "-"}</span>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+
+      <aside className="workspace-detail panel">
+        {selected ? (
+          <>
+            <div className="workspace-titlebar">
+              <div>
+                <p className="eyebrow">workspace selection</p>
+                <h2>{selected.issue_identifier}</h2>
+                <p>{selected.title}</p>
+              </div>
+              <StatusPill tone={selected.can_cleanup ? "green" : selected.retained ? "amber" : "slate"} label={selected.cleanup_outcome} />
+            </div>
+
+            <div className="workspace-action-row">
+              <button onClick={() => openLinear(selected.issue_identifier)} disabled={!selected.issue_identifier}><ExternalLink size={15} />Open Issue</button>
+              <button onClick={() => selected.pr_url && window.open(selected.pr_url, "_blank", "noopener,noreferrer")} disabled={!selected.pr_url}><LinkIcon size={15} />Open PR</button>
+              <button onClick={() => onAction("open-workspace", () => openWorkspace(selected.workspace_path ?? ""))} disabled={!selected.workspace_path || busyAction !== ""}><FolderOpen size={15} />Open Path</button>
+              <button onClick={() => onAction("retain-workspace", () => retainWorkspace(selected))} disabled={!selected.workspace_path || selected.retained || busyAction !== ""}><ShieldCheck size={15} />Retain</button>
+              <button onClick={() => onAction("cleanup-workspace", () => cleanupWorkspace(selected))} disabled={!selected.can_cleanup || busyAction !== ""}><Trash2 size={15} />Clean Up</button>
+            </div>
+
+            {!selected.can_cleanup && (
+              <div className="run-alert">
+                <AlertTriangle size={16} />
+                <strong>{selected.cleanup_blocked_reason}</strong>
+              </div>
+            )}
+
+            <div className="workspace-fact-grid">
+              <WorkspaceFact icon={<FolderOpen size={16} />} label="Path" value={selected.workspace_path ?? "-"} />
+              <WorkspaceFact icon={<HardDrive size={16} />} label="Disk" value={formatBytes(selected.disk_bytes ?? 0)} />
+              <WorkspaceFact icon={<GitBranch size={16} />} label="Branch" value={selected.branch ?? "-"} />
+              <WorkspaceFact icon={<ClipboardCheck size={16} />} label="Git Status" value={selected.git_status ?? "-"} />
+              <WorkspaceFact icon={<Activity size={16} />} label="Source" value={selected.source} />
+              <WorkspaceFact icon={<Clock size={16} />} label="Last Activity" value={selected.last_activity ? formatDate(selected.last_activity) : "-"} />
+              <WorkspaceFact icon={<LinkIcon size={16} />} label="PR URL" value={selected.pr_url ?? "-"} />
+              <WorkspaceFact icon={<ClipboardCheck size={16} />} label="Workpad" value={selected.workpad_status} />
+              <WorkspaceFact icon={<FileText size={16} />} label="Run Artifact" value={selected.has_run_artifact ? "recorded" : "missing"} />
+              <WorkspaceFact icon={<ShieldCheck size={16} />} label="Retention" value={selected.retained ? `${selected.retained_reason ?? "retained"} ${selected.retained_at ? `at ${formatDate(selected.retained_at)}` : ""}` : "not marked retained"} />
+            </div>
+
+            <div className="message-box">
+              <h3>Cleanup Decision</h3>
+              <pre>{selected.cleanup_blocked_reason}</pre>
+            </div>
+          </>
+        ) : (
+          <div className="empty-inspector">No workspace selected.</div>
+        )}
+      </aside>
+    </section>
+  );
+}
+
+function WorkspaceFact({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return (
+    <div className="workspace-fact">
+      {icon}
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }
 
@@ -1741,7 +1928,7 @@ function StatusPill({ tone, label }: { tone: string; label: string }) {
   return <span className={`status-pill tone-${tone}`}>{label}</span>;
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
+function Metric({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="metric">
       <strong>{value}</strong>
@@ -1759,6 +1946,41 @@ async function openWorkspace(workspace: string) {
     return;
   }
   await post("/api/v1/workspaces/open", { path: workspace });
+}
+
+async function retainWorkspace(item: WorkspaceInventoryItem) {
+  await post("/api/v1/workspaces/retain", {
+    issue_id: item.issue_id,
+    workspace_path: item.workspace_path
+  });
+}
+
+async function cleanupWorkspace(item: WorkspaceInventoryItem) {
+  await post("/api/v1/workspaces/cleanup", {
+    issue_id: item.issue_id,
+    workspace_path: item.workspace_path,
+    force: false
+  });
+}
+
+function workspaceKey(item: WorkspaceInventoryItem) {
+  return `${item.worker_host ?? "local"}:${item.workspace_path ?? item.issue_identifier}`;
+}
+
+function artifactSummary(item: WorkspaceInventoryItem) {
+  return [
+    item.has_pr_artifact ? "PR" : "",
+    item.has_workpad_artifact ? "workpad" : "",
+    item.has_run_artifact ? "run" : ""
+  ].filter(Boolean).join(" + ") || "missing";
+}
+
+function gitSummary(item: WorkspaceInventoryItem) {
+  if (item.git_clean === undefined) {
+    return item.git_status ?? "unknown";
+  }
+
+  return item.git_clean ? "clean" : "dirty";
 }
 
 function formatTime(value: string) {
@@ -1804,6 +2026,22 @@ function formatCompactNumber(value: number) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat().format(value);
+}
+
+function formatBytes(value: number) {
+  if (value <= 0) {
+    return "0 B";
+  }
+
+  const units = ["B", "KB", "MB", "GB"];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+
+  return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
