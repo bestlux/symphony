@@ -73,6 +73,7 @@
                             <DataGridCheckBoxColumn Header="Clean" Binding="{Binding WorkspaceClean}" Width="60"/>
                             <DataGridTextColumn Header="Session" Binding="{Binding SessionId}" Width="170"/>
                             <DataGridTextColumn Header="Event" Binding="{Binding LastEvent}" Width="140"/>
+                            <DataGridTextColumn Header="Tokens" Binding="{Binding Tokens.TotalTokens, StringFormat=N0}" Width="80"/>
                             <DataGridTextColumn Header="Started" Binding="{Binding StartedAt, StringFormat=t}" Width="90"/>
                             <DataGridTextColumn Header="Workspace" Binding="{Binding WorkspacePath}" Width="*"/>
                         </DataGrid.Columns>

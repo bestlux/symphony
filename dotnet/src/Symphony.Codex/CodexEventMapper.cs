@@ -15,7 +15,7 @@ public static class CodexEventMapper
         string? turnId = null)
     {
         var mappedEventName = MapEventName(eventName, payload);
-        var usage = FindObject(payload, "usage");
+        var usage = FindAccountingUsage(mappedEventName, payload);
         var rateLimits = FindNode(payload, "rateLimits", "rate_limits");
 
         return new CodexRuntimeUpdate(
@@ -51,21 +51,72 @@ public static class CodexEventMapper
         return eventName;
     }
 
-    private static JsonObject? FindObject(JsonObject? payload, string propertyName)
+    private static JsonObject? FindAccountingUsage(string eventName, JsonObject? payload)
+    {
+        if (string.Equals(eventName, "thread/tokenUsage/updated", StringComparison.Ordinal))
+        {
+            var tokenUsage = FindObject(payload, "tokenUsage", "token_usage");
+            return FindObject(tokenUsage, "total", "total_token_usage", "totalTokenUsage");
+        }
+
+        if (string.Equals(eventName, "codex/event/token_count", StringComparison.Ordinal)
+            || string.Equals(eventName, "token_count", StringComparison.Ordinal))
+        {
+            return FindObjectAtPaths(
+                    payload,
+                    new[] { "params", "msg", "payload", "info", "total_token_usage" },
+                    new[] { "params", "msg", "payload", "info", "totalTokenUsage" },
+                    new[] { "params", "msg", "info", "total_token_usage" },
+                    new[] { "params", "msg", "info", "totalTokenUsage" })
+                ?? FindObject(FindObject(payload, "info"), "total_token_usage", "totalTokenUsage");
+        }
+
+        return null;
+    }
+
+    private static JsonObject? FindObjectAtPaths(JsonObject? payload, params string[][] paths)
+    {
+        foreach (var path in paths)
+        {
+            var current = payload as JsonNode;
+            foreach (var segment in path)
+            {
+                if (current is not JsonObject currentObject || currentObject[segment] is not { } next)
+                {
+                    current = null;
+                    break;
+                }
+
+                current = next;
+            }
+
+            if (current is JsonObject result)
+            {
+                return result;
+            }
+        }
+
+        return null;
+    }
+
+    private static JsonObject? FindObject(JsonObject? payload, params string[] propertyNames)
     {
         if (payload is null)
         {
             return null;
         }
 
-        if (payload[propertyName] is JsonObject direct)
+        foreach (var propertyName in propertyNames)
         {
-            return direct;
-        }
+            if (payload[propertyName] is JsonObject direct)
+            {
+                return direct;
+            }
 
-        if (payload["params"] is JsonObject parameters && parameters[propertyName] is JsonObject nested)
-        {
-            return nested;
+            if (payload["params"] is JsonObject parameters && parameters[propertyName] is JsonObject nested)
+            {
+                return nested;
+            }
         }
 
         return null;

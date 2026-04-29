@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Symphony.Abstractions\Symphony.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\Symphony.Codex\Symphony.Codex.csproj" />
     <ProjectReference Include="..\..\src\Symphony.Core\Symphony.Core.csproj" />
     <ProjectReference Include="..\..\src\Symphony.Linear\Symphony.Linear.csproj" />
     <ProjectReference Include="..\..\src\Symphony.Service\Symphony.Service.csproj" />
