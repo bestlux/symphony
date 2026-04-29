@@ -19,8 +19,14 @@ public sealed record SymphonyStateDto
     [JsonPropertyName("completed")]
     public IReadOnlyList<CompletedRunDto> Completed { get; init; } = [];
 
+    [JsonPropertyName("polling")]
+    public PollingDto Polling { get; init; } = new();
+
     [JsonPropertyName("codex_totals")]
     public CodexTotalsDto CodexTotals { get; init; } = new();
+
+    [JsonPropertyName("rate_limits")]
+    public object? RateLimits { get; init; }
 }
 
 public sealed record CountsDto
@@ -33,6 +39,18 @@ public sealed record CountsDto
 
     [JsonPropertyName("completed")]
     public int Completed { get; init; }
+}
+
+public sealed record PollingDto
+{
+    [JsonPropertyName("in_progress")]
+    public bool InProgress { get; init; }
+
+    [JsonPropertyName("last_poll_at")]
+    public DateTimeOffset? LastPollAt { get; init; }
+
+    [JsonPropertyName("next_poll_at")]
+    public DateTimeOffset? NextPollAt { get; init; }
 }
 
 public sealed record CodexTotalsDto

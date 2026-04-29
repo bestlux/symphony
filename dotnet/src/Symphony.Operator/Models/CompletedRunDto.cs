@@ -40,6 +40,9 @@ public sealed record CompletedRunDto
     [JsonPropertyName("thread_id")]
     public string? ThreadId { get; init; }
 
+    [JsonPropertyName("turn_id")]
+    public string? TurnId { get; init; }
+
     [JsonPropertyName("turn_count")]
     public int TurnCount { get; init; }
 
