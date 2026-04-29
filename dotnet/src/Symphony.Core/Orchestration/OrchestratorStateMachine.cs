@@ -245,6 +245,7 @@ public sealed class OrchestratorStateMachine
         }
 
         state.Running.Remove(issueId);
+        state.CodexTokenUsageByIssue.Remove(issueId);
         ScheduleRetry(
             state,
             config,
@@ -329,16 +330,32 @@ public sealed class OrchestratorStateMachine
 
         if (usage is not null)
         {
-            var deltaInput = Math.Max(0, usage.InputTokens - running.LastReportedInputTokens);
-            var deltaOutput = Math.Max(0, usage.OutputTokens - running.LastReportedOutputTokens);
-            var deltaTotal = Math.Max(0, usage.TotalTokens - running.LastReportedTotalTokens);
+            var threadKey = TokenUsageThreadKey(update.ThreadId, running.ThreadId);
+            if (!state.CodexTokenUsageByIssue.TryGetValue(issueId, out var reportsByThread))
+            {
+                reportsByThread = new Dictionary<string, CodexTokenUsageTotals>(StringComparer.Ordinal);
+                state.CodexTokenUsageByIssue[issueId] = reportsByThread;
+            }
+
+            reportsByThread.TryGetValue(threadKey, out var previous);
+            var previousInput = previous?.InputTokens ?? 0;
+            var previousOutput = previous?.OutputTokens ?? 0;
+            var previousTotal = previous?.TotalTokens ?? 0;
+
+            var reportedInput = Math.Max(previousInput, usage.InputTokens);
+            var reportedOutput = Math.Max(previousOutput, usage.OutputTokens);
+            var reportedTotal = Math.Max(previousTotal, usage.TotalTokens);
+            var deltaInput = reportedInput - previousInput;
+            var deltaOutput = reportedOutput - previousOutput;
+            var deltaTotal = reportedTotal - previousTotal;
 
             inputTokens += deltaInput;
             outputTokens += deltaOutput;
             totalTokens += deltaTotal;
-            lastInput = usage.InputTokens;
-            lastOutput = usage.OutputTokens;
-            lastTotal = usage.TotalTokens;
+            lastInput = reportedInput;
+            lastOutput = reportedOutput;
+            lastTotal = reportedTotal;
+            reportsByThread[threadKey] = new CodexTokenUsageTotals(reportedInput, reportedOutput, reportedTotal);
 
             state.CodexTotals = state.CodexTotals with
             {
@@ -447,6 +464,7 @@ public sealed class OrchestratorStateMachine
             RetryAttempt: decision.Attempt,
             StartedAt: now);
 
+        state.CodexTokenUsageByIssue.Remove(decision.Issue.Id);
         state.Claimed.Add(decision.Issue.Id);
         state.RetryAttempts.Remove(decision.Issue.Id);
     }
@@ -465,6 +483,7 @@ public sealed class OrchestratorStateMachine
     private static void PopRunning(OrchestratorRuntimeState state, string issueId)
     {
         state.Running.Remove(issueId);
+        state.CodexTokenUsageByIssue.Remove(issueId);
         state.Claimed.Remove(issueId);
         state.RetryAttempts.Remove(issueId);
     }
@@ -473,6 +492,18 @@ public sealed class OrchestratorStateMachine
     {
         state.Claimed.Remove(issueId);
         state.RetryAttempts.Remove(issueId);
+    }
+
+    private static string TokenUsageThreadKey(string? updateThreadId, string? runningThreadId)
+    {
+        if (!string.IsNullOrWhiteSpace(updateThreadId))
+        {
+            return updateThreadId;
+        }
+
+        return !string.IsNullOrWhiteSpace(runningThreadId)
+            ? runningThreadId
+            : "__unknown_thread__";
     }
 
     private int AvailableSlots(OrchestratorRuntimeState state)

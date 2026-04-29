@@ -21,6 +21,8 @@ public sealed class OrchestratorRuntimeState
 
     public HashSet<string> Completed { get; } = new(StringComparer.Ordinal);
 
+    public Dictionary<string, Dictionary<string, CodexTokenUsageTotals>> CodexTokenUsageByIssue { get; } = new(StringComparer.Ordinal);
+
     public CodexTotals CodexTotals { get; set; } = new(0, 0, 0, 0);
 
     public CodexRateLimitSnapshot? CodexRateLimits { get; set; }
@@ -54,6 +56,11 @@ public sealed record RunningIssue(
     int TurnCount,
     int? RetryAttempt,
     DateTimeOffset StartedAt);
+
+public sealed record CodexTokenUsageTotals(
+    long InputTokens,
+    long OutputTokens,
+    long TotalTokens);
 
 public sealed record RetryEntry(
     string IssueId,
