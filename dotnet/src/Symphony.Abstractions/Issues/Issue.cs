@@ -14,4 +14,18 @@ public sealed record Issue(
     DateTimeOffset? CreatedAt,
     DateTimeOffset? UpdatedAt,
     string? AssigneeId,
-    bool? AssignedToWorker = null);
+    bool? AssignedToWorker = null,
+    IReadOnlyList<IssueComment>? Comments = null,
+    IReadOnlyList<IssueLink>? Links = null);
+
+public sealed record IssueComment(
+    string Id,
+    string? Body,
+    DateTimeOffset? CreatedAt,
+    DateTimeOffset? UpdatedAt);
+
+public sealed record IssueLink(
+    string Id,
+    string? Title,
+    string? Url,
+    string? SourceType);

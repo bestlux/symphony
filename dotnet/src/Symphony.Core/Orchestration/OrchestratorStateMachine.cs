@@ -409,6 +409,7 @@ public sealed class OrchestratorStateMachine
         HashSet<string> terminalStates)
     {
         return CandidateIssue(issue, activeStates, terminalStates)
+            && !IsHumanReviewState(issue.State)
             && IsDispatchState(issue.State, dispatchStates)
             && !TodoIssueBlockedByNonTerminal(issue, terminalStates)
             && !state.Claimed.Contains(issue.Id)
@@ -516,6 +517,11 @@ public sealed class OrchestratorStateMachine
     private static bool IsDispatchState(string state, HashSet<string> dispatchStates)
     {
         return dispatchStates.Count == 0 || dispatchStates.Contains(ConfigResolver.NormalizeIssueState(state));
+    }
+
+    private static bool IsHumanReviewState(string state)
+    {
+        return string.Equals(ConfigResolver.NormalizeIssueState(state), "human review", StringComparison.Ordinal);
     }
 
     private static bool IsTerminalState(string state, HashSet<string> terminalStates)

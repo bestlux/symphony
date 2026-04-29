@@ -40,6 +40,9 @@ public static class HttpApi
             CancellationToken cancellationToken) =>
         {
             var config = options.CurrentConfig();
+            var snapshot = state.Snapshot();
+            var runningByIssue = snapshot.Running.ToDictionary(entry => entry.IssueId, StringComparer.Ordinal);
+            var completedByIssue = LatestCompletedByIssue(snapshot);
             var workflowStates = new[]
             {
                 SymphonyHostedService.TodoState,
@@ -58,9 +61,12 @@ public static class HttpApi
                     state = workflowState,
                     issues = issues
                         .Where(issue => string.Equals(issue.State, workflowState, StringComparison.OrdinalIgnoreCase))
-                        .Select(issue => BoardIssuePayload(issue))
+                        .Select(issue => BoardIssuePayload(
+                            issue,
+                            runningByIssue.GetValueOrDefault(issue.Id),
+                            completedByIssue.GetValueOrDefault(issue.Id)))
                 }),
-                runtime = ToStatePayload(state.Snapshot()),
+                runtime = ToStatePayload(snapshot),
                 dispatch_states = config.Tracker.DispatchStates,
                 active_states = config.Tracker.ActiveStates
             });
@@ -165,6 +171,38 @@ public static class HttpApi
             if (string.IsNullOrWhiteSpace(request.State))
             {
                 return Results.BadRequest(new { error = new { code = "missing_state", message = "State is required." } });
+            }
+
+            if (string.Equals(request.State, SymphonyHostedService.HumanReviewState, StringComparison.OrdinalIgnoreCase))
+            {
+                var issues = await tracker.FetchIssueStatesByIdsAsync([issue_id], cancellationToken).ConfigureAwait(false);
+                var issue = issues.FirstOrDefault();
+                if (issue is null)
+                {
+                    return Results.BadRequest(new { error = new { code = "issue_not_found", message = "Issue was not found in the tracker." } });
+                }
+
+                var snapshot = state.Snapshot();
+                var packet = ReviewPacketBuilder.Build(
+                    issue,
+                    snapshot.Running.FirstOrDefault(entry => entry.IssueId == issue.Id),
+                    snapshot.Completed
+                        .Where(entry => entry.IssueId == issue.Id)
+                        .OrderByDescending(entry => entry.CompletedAt)
+                        .FirstOrDefault());
+                if (!packet.ReadyForHumanReview)
+                {
+                    return Results.BadRequest(new
+                    {
+                        error = new
+                        {
+                            code = "review_packet_incomplete",
+                            message = "Human Review requires a PR URL, complete Codex workpad, summary, changed files, and validation evidence.",
+                            missing = packet.Missing,
+                            review_packet = packet
+                        }
+                    });
+                }
             }
 
             await tracker.UpdateIssueStateAsync(issue_id, request.State, cancellationToken).ConfigureAwait(false);
@@ -358,7 +396,21 @@ public static class HttpApi
         }
     };
 
-    private static object BoardIssuePayload(Issue issue) => new
+    private static IReadOnlyDictionary<string, CompletedRunEntry> LatestCompletedByIssue(RuntimeSnapshot snapshot)
+    {
+        var entries = new Dictionary<string, CompletedRunEntry>(StringComparer.Ordinal);
+        foreach (var entry in snapshot.Completed.OrderByDescending(entry => entry.CompletedAt))
+        {
+            entries.TryAdd(entry.IssueId, entry);
+        }
+
+        return entries;
+    }
+
+    private static object BoardIssuePayload(
+        Issue issue,
+        RunningSession? running,
+        CompletedRunEntry? completed) => new
     {
         issue_id = issue.Id,
         issue_identifier = issue.Identifier,
@@ -371,6 +423,7 @@ public static class HttpApi
         labels = issue.Labels,
         updated_at = issue.UpdatedAt,
         created_at = issue.CreatedAt,
+        review_packet = ReviewPacketBuilder.Build(issue, running, completed),
         blocked_by = issue.BlockedBy.Select(blocker => new
         {
             id = blocker.Id,

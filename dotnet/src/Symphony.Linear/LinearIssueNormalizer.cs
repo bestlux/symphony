@@ -27,6 +27,8 @@ public sealed class LinearIssueNormalizer
             AssigneeId = assigneeId,
             Labels = ExtractLabels(issue),
             BlockedBy = ExtractBlockers(issue),
+            Comments = ExtractComments(issue),
+            Attachments = ExtractAttachments(issue),
             AssignedToWorker = assigneeIds is null || (assigneeId is not null && assigneeIds.Contains(assigneeId)),
             CreatedAt = GetDateTimeOffset(issue, "createdAt"),
             UpdatedAt = GetDateTimeOffset(issue, "updatedAt")
@@ -71,7 +73,17 @@ public sealed class LinearIssueNormalizer
             issue.CreatedAt,
             issue.UpdatedAt,
             issue.AssigneeId,
-            issue.AssignedToWorker);
+            issue.AssignedToWorker,
+            issue.Comments.Select(comment => new IssueComment(
+                comment.Id ?? "",
+                comment.Body,
+                comment.CreatedAt,
+                comment.UpdatedAt)).ToArray(),
+            issue.Attachments.Select(attachment => new IssueLink(
+                attachment.Id ?? "",
+                attachment.Title,
+                attachment.Url,
+                attachment.SourceType)).ToArray());
     }
 
     public static void ThrowIfGraphQlErrors(JsonElement response)
@@ -128,6 +140,60 @@ public sealed class LinearIssueNormalizer
         }
 
         return blockers;
+    }
+
+    private static IReadOnlyList<LinearComment> ExtractComments(JsonElement issue)
+    {
+        if (!TryGetProperty(issue, out var comments, "comments", "nodes") || comments.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var entries = new List<LinearComment>();
+        foreach (var comment in comments.EnumerateArray())
+        {
+            var id = GetString(comment, "id");
+            var body = GetString(comment, "body");
+            if (string.IsNullOrWhiteSpace(id) && string.IsNullOrWhiteSpace(body))
+            {
+                continue;
+            }
+
+            entries.Add(new LinearComment(
+                id,
+                body,
+                GetDateTimeOffset(comment, "createdAt"),
+                GetDateTimeOffset(comment, "updatedAt")));
+        }
+
+        return entries;
+    }
+
+    private static IReadOnlyList<LinearAttachment> ExtractAttachments(JsonElement issue)
+    {
+        if (!TryGetProperty(issue, out var attachments, "attachments", "nodes") || attachments.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var entries = new List<LinearAttachment>();
+        foreach (var attachment in attachments.EnumerateArray())
+        {
+            var id = GetString(attachment, "id");
+            var url = GetString(attachment, "url");
+            if (string.IsNullOrWhiteSpace(id) && string.IsNullOrWhiteSpace(url))
+            {
+                continue;
+            }
+
+            entries.Add(new LinearAttachment(
+                id,
+                GetString(attachment, "title"),
+                url,
+                GetString(attachment, "sourceType")));
+        }
+
+        return entries;
     }
 
     private static bool TryGetProperty(JsonElement root, out JsonElement value, params string[] path)

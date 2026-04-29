@@ -26,6 +26,22 @@ public static class LinearQueries
                   name
                 }
               }
+              comments(first: 50) {
+                nodes {
+                  id
+                  body
+                  createdAt
+                  updatedAt
+                }
+              }
+              attachments(first: 25) {
+                nodes {
+                  id
+                  title
+                  url
+                  sourceType
+                }
+              }
               inverseRelations(first: $relationFirst) {
                 nodes {
                   type
@@ -69,6 +85,22 @@ public static class LinearQueries
               labels {
                 nodes {
                   name
+                }
+              }
+              comments(first: 50) {
+                nodes {
+                  id
+                  body
+                  createdAt
+                  updatedAt
+                }
+              }
+              attachments(first: 25) {
+                nodes {
+                  id
+                  title
+                  url
+                  sourceType
                 }
               }
               inverseRelations(first: $relationFirst) {
