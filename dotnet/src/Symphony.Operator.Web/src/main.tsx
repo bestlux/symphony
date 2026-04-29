@@ -215,6 +215,7 @@ type WorkCard = {
   message: string;
   state: string;
   status: string;
+  raw?: unknown;
   details: Array<[string, string]>;
 };
 
@@ -587,7 +588,12 @@ function App() {
 
                 <div className="message-box">
                   <h3>Latest Message</h3>
-                  <pre>{selected.message || "No message captured yet."}</pre>
+                  <ActivityMessage
+                    eventName={selected.status}
+                    message={selected.message}
+                    raw={selected.raw}
+                    emptyText="No message captured yet."
+                  />
                 </div>
               </>
             ) : (
@@ -1078,7 +1084,12 @@ function RunsWorkspace({
             <div className="run-telemetry-grid">
               <div className="message-box">
                 <h3>Last Meaningful Event</h3>
-                <pre>{selected.lastMessage || selected.lastEvent || "No event payload captured."}</pre>
+                <ActivityMessage
+                  eventName={selected.lastEvent}
+                  message={selected.lastMessage}
+                  raw={selected.raw}
+                  emptyText="No event payload captured."
+                />
               </div>
               <div className="message-box">
                 <h3>Raw Payload</h3>
@@ -1495,6 +1506,304 @@ function stringValue(value: unknown) {
   return typeof value === "string" ? value : undefined;
 }
 
+type ActivitySummary = {
+  title: string;
+  details: Array<[string, string]>;
+  rawText: string;
+};
+
+function ActivityMessage({
+  eventName,
+  message,
+  raw,
+  emptyText
+}: {
+  eventName?: string;
+  message?: string;
+  raw?: unknown;
+  emptyText: string;
+}) {
+  const summary = summarizeActivity(eventName, message, raw, emptyText);
+  return (
+    <div className="activity-summary">
+      <strong>{summary.title}</strong>
+      {summary.details.length > 0 ? (
+        <dl>
+          {summary.details.map(([label, value]) => (
+            <React.Fragment key={label}>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+            </React.Fragment>
+          ))}
+        </dl>
+      ) : (
+        <p>{emptyText}</p>
+      )}
+      {summary.rawText && (
+        <details>
+          <summary>Raw payload</summary>
+          <button type="button" onClick={() => void navigator.clipboard?.writeText(summary.rawText)}>
+            Copy raw
+          </button>
+          <pre>{summary.rawText}</pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function summarizeActivity(eventName: string | undefined, message: string | undefined, raw: unknown, emptyText: string): ActivitySummary {
+  const rawText = rawActivityText(message, raw);
+  const parsed = parseJsonObject(message);
+  const activity = parsed ?? asRecord(raw);
+  const method = findString(activity, ["method", "event", "last_event"]) ?? eventName ?? "";
+  const params = firstRecord(activity, ["params", "payload"]) ?? activity;
+  const nestedMessage = firstRecord(params, ["msg", "message"]);
+  const nestedPayload = firstRecord(nestedMessage, ["payload"]) ?? firstRecord(params, ["payload"]);
+  const item = firstRecord(params, ["item"]) ?? firstRecord(nestedPayload, ["item"]);
+  const detailRoot = item ?? nestedPayload ?? params ?? activity;
+  const itemType = findString(item, ["type", "kind"]) ?? findString(nestedPayload, ["type", "kind"]);
+  const role = findString(item, ["role"]);
+  const title = activityTitle(method, itemType, role, message);
+  const details = activityDetails(title, method, detailRoot, item, nestedPayload, message)
+    .filter(([, value]) => value.trim().length > 0 && value.trim() !== "[]");
+
+  if (!rawText && details.length === 0) {
+    return { title: emptyText, details: [], rawText: "" };
+  }
+
+  return {
+    title,
+    details: details.length > 0 ? details : fallbackActivityDetails(method, message),
+    rawText
+  };
+}
+
+function activityTitle(method: string, itemType?: string, role?: string, message?: string) {
+  const normalized = method.toLowerCase();
+  const normalizedType = itemType?.toLowerCase() ?? "";
+  const normalizedRole = role?.toLowerCase() ?? "";
+  const text = message?.toLowerCase() ?? "";
+
+  if (normalized.includes("warning") || normalized.includes("error") || text.includes("\"level\":\"warning\"")) {
+    return "Warning";
+  }
+  if (normalized === "account/ratelimits/updated" || normalized.includes("ratelimit")) {
+    return "Rate limit updated";
+  }
+  if (normalized.includes("mcp") && (normalized.includes("ready") || normalized.includes("initialized") || normalized.includes("list_tools"))) {
+    return "MCP server ready";
+  }
+  if (normalized.includes("tool") || normalizedType.includes("tool") || normalizedType.includes("function_call")) {
+    return normalized.includes("completed") ? "Tool call completed" : "Tool call started";
+  }
+  if (normalized === "item/started" && normalizedType === "reasoning") {
+    return "Reasoning started";
+  }
+  if (normalized === "item/completed" && normalizedType === "reasoning") {
+    return "Reasoning completed";
+  }
+  if (normalizedRole === "assistant" || normalizedType === "message" || normalized.includes("message")) {
+    return "Assistant message";
+  }
+  if (normalized.includes("turn/completed") || normalized === "turn_completed") {
+    return "Turn completed";
+  }
+  if (normalized.includes("turn/failed") || normalized === "turn_failed") {
+    return "Warning";
+  }
+  if (method) {
+    return `Agent activity: ${humanizeEventName(method)}`;
+  }
+  return "Agent activity";
+}
+
+function activityDetails(
+  title: string,
+  method: string,
+  detailRoot: Record<string, unknown> | undefined,
+  item: Record<string, unknown> | undefined,
+  payload: Record<string, unknown> | undefined,
+  message?: string
+): Array<[string, string]> {
+  const details: Array<[string, string]> = [];
+  const eventLabel = humanizeEventName(method);
+  if (eventLabel) {
+    details.push(["Event", eventLabel]);
+  }
+
+  const toolName = findString(detailRoot, ["name", "tool_name", "toolName", "call_id", "callId"]);
+  const status = findString(detailRoot, ["status", "state"]);
+  const server = findString(detailRoot, ["server", "server_name", "serverName"]);
+  const text = assistantText(item) ?? assistantText(payload) ?? stringValue(detailRoot?.text) ?? stringValue(detailRoot?.message);
+
+  if (title.startsWith("Tool call") && toolName) {
+    details.push(["Tool", toolName]);
+  }
+  if (server) {
+    details.push(["Server", server]);
+  }
+  if (status) {
+    details.push(["Status", humanizeEventName(status)]);
+  }
+  if (text && !isLowSignalText(text)) {
+    details.push([title === "Assistant message" ? "Message" : "Detail", trimDetail(text)]);
+  }
+
+  if (title === "Rate limit updated") {
+    for (const [label, value] of rateLimitDetails(detailRoot)) {
+      details.push([label, value]);
+      if (details.length >= 5) {
+        break;
+      }
+    }
+  }
+
+  for (const [label, value] of compactScalarDetails(detailRoot)) {
+    if (!details.some(([existing]) => existing === label)) {
+      details.push([label, value]);
+    }
+    if (details.length >= 5) {
+      break;
+    }
+  }
+
+  if (details.length <= 1 && message && !message.trim().startsWith("{") && !isLowSignalText(message)) {
+    details.push(["Detail", trimDetail(message)]);
+  }
+
+  return details;
+}
+
+function fallbackActivityDetails(method: string, message?: string): Array<[string, string]> {
+  const details: Array<[string, string]> = [];
+  if (method) {
+    details.push(["Event", humanizeEventName(method)]);
+  }
+  if (message && !message.trim().startsWith("{") && !isLowSignalText(message)) {
+    details.push(["Detail", trimDetail(message)]);
+  }
+  return details;
+}
+
+function compactScalarDetails(record: Record<string, unknown> | undefined): Array<[string, string]> {
+  if (!record) {
+    return [];
+  }
+
+  const lowSignal = new Set(["id", "type", "kind", "role", "content", "summary", "message", "text", "payload", "item"]);
+  return Object.entries(record)
+    .filter(([key, value]) => !lowSignal.has(key) && scalarActivityValue(value))
+    .slice(0, 4)
+    .map(([key, value]) => [humanizeEventName(key), summarizeUnknown(value)] as [string, string]);
+}
+
+function rateLimitDetails(record: Record<string, unknown> | undefined): Array<[string, string]> {
+  const limits = firstRecord(record, ["rateLimits", "rate_limits", "values", "Values"]) ?? record;
+  if (!limits) {
+    return [];
+  }
+
+  return Object.entries(limits)
+    .flatMap(([key, value]) => {
+      const nested = asRecord(value);
+      if (nested) {
+        const scalar = stringValue(nested.value)
+          ?? stringValue(nested.remaining)
+          ?? stringValue(nested.limit)
+          ?? (typeof nested.value === "number" ? String(nested.value) : undefined)
+          ?? (typeof nested.remaining === "number" ? String(nested.remaining) : undefined)
+          ?? (typeof nested.limit === "number" ? String(nested.limit) : undefined);
+        return scalar ? [[humanizeEventName(key), scalar] as [string, string]] : [];
+      }
+      return scalarActivityValue(value) ? [[humanizeEventName(key), summarizeUnknown(value)] as [string, string]] : [];
+    })
+    .slice(0, 4);
+}
+
+function scalarActivityValue(value: unknown) {
+  return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
+
+function assistantText(record: Record<string, unknown> | undefined): string | undefined {
+  const content = record?.content;
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        const partRecord = asRecord(part);
+        return stringValue(partRecord?.text) ?? stringValue(partRecord?.content);
+      })
+      .filter((part): part is string => Boolean(part?.trim()))
+      .join("\n");
+  }
+  return undefined;
+}
+
+function isLowSignalText(value: string) {
+  const normalized = value.trim();
+  return normalized.length === 0 || normalized === "[]" || normalized === "{}";
+}
+
+function trimDetail(value: string) {
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  return trimmed.length > 360 ? `${trimmed.slice(0, 357)}...` : trimmed;
+}
+
+function findString(record: Record<string, unknown> | undefined, keys: string[]) {
+  for (const key of keys) {
+    const value = stringValue(record?.[key]);
+    if (value?.trim()) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function firstRecord(record: Record<string, unknown> | undefined, keys: string[]) {
+  for (const key of keys) {
+    const value = asRecord(record?.[key]);
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function parseJsonObject(value: string | undefined) {
+  if (!value?.trim().startsWith("{")) {
+    return undefined;
+  }
+
+  try {
+    return asRecord(JSON.parse(value));
+  } catch {
+    return undefined;
+  }
+}
+
+function rawActivityText(message: string | undefined, raw: unknown) {
+  if (message?.trim()) {
+    return message.trim();
+  }
+  if (raw !== undefined) {
+    return formatRawPayload(raw);
+  }
+  return "";
+}
+
+function humanizeEventName(value: string) {
+  return value
+    .replaceAll("/", " ")
+    .replaceAll("_", " ")
+    .replaceAll("-", " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 function formatRawPayload(value: unknown) {
   return JSON.stringify(value, null, 2) ?? "";
 }
@@ -1814,6 +2123,7 @@ function boardIssueCard(
     message,
     state: issue.state,
     status: runtimeStatus,
+    raw: running ?? completed ?? retrying ?? issue,
     details: [
       ["State", issue.state || "-"],
       ["Priority", issue.priority?.toString() ?? "-"],
@@ -1878,6 +2188,7 @@ function runningCard(item: RunningItem): WorkCard {
     message: item.last_message ?? "",
     state: item.state,
     status: item.last_event ?? "active",
+    raw: item,
     details: [
       ["State", item.state || "-"],
       ...tokenDetails(item.tokens),
@@ -1910,6 +2221,7 @@ function retryCard(item: RetryItem, completed?: CompletedItem): WorkCard {
     message: item.error ?? "",
     state: "Rework",
     status: "retrying",
+    raw: item,
     details: [
       ["Attempt", String(item.attempt)],
       ...tokenDetails(tokens),
@@ -1944,6 +2256,7 @@ function completedCard(item: CompletedItem): WorkCard {
     message: item.last_message ?? item.error ?? "",
     state: item.state,
     status: item.status,
+    raw: item,
     details: [
       ["State", item.state || "-"],
       ["Status", item.status || "-"],
