@@ -13,6 +13,7 @@ public sealed class RuntimeStateStore
     private readonly ConcurrentQueue<CompletedRunEntry> _completed = new();
     private readonly ConcurrentQueue<string> _recentEvents = new();
     private readonly ConcurrentDictionary<string, string> _lastRecentEventByIssue = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, WorkspaceRetentionEntry> _retainedWorkspaces = new(StringComparer.OrdinalIgnoreCase);
     private PollingStatus _polling = new(false, null, null);
     private CodexTotals _totals = new(0, 0, 0, 0);
     private object? _rateLimits;
@@ -66,6 +67,31 @@ public sealed class RuntimeStateStore
     public void RecordIssueStateTransition(string issueIdentifier, string message)
     {
         AddRecentEvent(issueIdentifier, message, $"{DateTimeOffset.UtcNow:O} {issueIdentifier} {message}");
+    }
+
+    public void MarkWorkspaceRetained(string? issueId, string? issueIdentifier, string workspacePath, string reason)
+    {
+        var fullPath = Path.GetFullPath(workspacePath);
+        _retainedWorkspaces[fullPath] = new WorkspaceRetentionEntry(
+            issueId,
+            issueIdentifier,
+            fullPath,
+            reason,
+            DateTimeOffset.UtcNow);
+        AddRecentEvent(
+            issueIdentifier ?? issueId ?? fullPath,
+            $"workspace retained {fullPath} {reason}",
+            $"{DateTimeOffset.UtcNow:O} {issueIdentifier ?? issueId ?? "workspace"} workspace retained path={fullPath} reason={reason}");
+    }
+
+    public WorkspaceRetentionEntry? RetainedWorkspace(string? workspacePath)
+    {
+        if (string.IsNullOrWhiteSpace(workspacePath))
+        {
+            return null;
+        }
+
+        return _retainedWorkspaces.GetValueOrDefault(Path.GetFullPath(workspacePath));
     }
 
     public void RecordCompletion(CompletedRunEntry entry)
@@ -274,6 +300,13 @@ public sealed record CompletedRunEntry(
     string CleanupOutcome);
 
 public sealed record CodexTotals(long InputTokens, long OutputTokens, long TotalTokens, double SecondsRunning);
+
+public sealed record WorkspaceRetentionEntry(
+    string? IssueId,
+    string? IssueIdentifier,
+    string WorkspacePath,
+    string Reason,
+    DateTimeOffset RetainedAt);
 
 public sealed class ManualRefreshSignal
 {

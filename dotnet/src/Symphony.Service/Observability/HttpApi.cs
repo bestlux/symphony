@@ -258,11 +258,16 @@ public static class HttpApi
 
         app.MapPost("/api/v1/workspaces/cleanup", async (
             CleanupWorkspaceRequest request,
+            WorkspaceInventoryService inventory,
             MergeWorkflowService merge,
             CancellationToken cancellationToken) =>
         {
             try
             {
+                await inventory.RequireCleanupAllowedAsync(
+                    request.IssueId,
+                    request.WorkspacePath,
+                    cancellationToken).ConfigureAwait(false);
                 var result = await merge.CleanupAsync(
                     request.IssueId,
                     request.WorkspacePath,
@@ -280,6 +285,33 @@ public static class HttpApi
                 when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
             {
                 return Results.BadRequest(new { error = new { code = "cleanup_failed", message = ex.Message } });
+            }
+        });
+
+        app.MapGet("/api/v1/workspaces", async (
+            WorkspaceInventoryService inventory,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Json(await inventory.ListAsync(cancellationToken).ConfigureAwait(false));
+        });
+
+        app.MapPost("/api/v1/workspaces/retain", async (
+            RetainWorkspaceRequest request,
+            WorkspaceInventoryService inventory,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var item = await inventory.MarkRetainedAsync(
+                    request.IssueId,
+                    request.WorkspacePath,
+                    cancellationToken).ConfigureAwait(false);
+                return Results.Accepted(value: new { accepted = true, workspace = item });
+            }
+            catch (Exception ex)
+                when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+            {
+                return Results.BadRequest(new { error = new { code = "retain_failed", message = ex.Message } });
             }
         });
 
