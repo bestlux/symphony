@@ -285,6 +285,29 @@ type RunItem = {
   staleReason: string;
 };
 
+type LogSeverity = "info" | "warning" | "error";
+type LogCategory = "agent" | "service" | "raw";
+
+type LogFilters = {
+  agent: boolean;
+  warnings: boolean;
+  service: boolean;
+  raw: boolean;
+};
+
+type ReadableLogRow = {
+  key: string;
+  timestamp: string;
+  issueIdentifier: string;
+  severity: LogSeverity;
+  category: LogCategory;
+  label: string;
+  summary: string;
+  raw: string;
+  count: number;
+  lowSignal: boolean;
+};
+
 const laneMeta: Array<Omit<Lane, "cards">> = [
   { key: "todo", name: "Todo", caption: "Queued", tone: "blue", icon: <CircleDot size={16} /> },
   { key: "in-progress", name: "In Progress", caption: "Agent implementation", tone: "green", icon: <PlayCircle size={16} /> },
@@ -306,6 +329,7 @@ function App() {
   const [busyAction, setBusyAction] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [restarting, setRestarting] = useState(false);
+  const [logFilters, setLogFilters] = useState<LogFilters>({ agent: true, warnings: true, service: true, raw: false });
 
   async function load() {
     try {
@@ -337,6 +361,7 @@ function App() {
   const selected = cards.find((card) => card.key === selectedKey) ?? cards[0];
   const reviewItems = useMemo(() => buildReviewItems(board, state), [board, state]);
   const selectedReview = reviewItems.find((item) => item.key === selectedReviewKey) ?? reviewItems[0];
+  const readableLogs = useMemo(() => buildReadableLogs(logs, logFilters), [logs, logFilters]);
 
   useEffect(() => {
     if (!selectedKey && cards.length > 0) {
@@ -608,11 +633,23 @@ function App() {
 
           <div className="logs panel">
             <div className="section-heading compact">
-              <h2>Recent Logs</h2>
-              <p>Noise-reduced stream from the Service.</p>
+              <div>
+                <h2>Recent Logs</h2>
+                <p>Noise-reduced stream from the Service.</p>
+              </div>
+              <div className="log-filter-row" role="group" aria-label="Recent log filters">
+                <FilterToggle label="Agent activity" active={logFilters.agent} onClick={() => setLogFilters((current) => ({ ...current, agent: !current.agent }))} />
+                <FilterToggle label="Warnings/errors" active={logFilters.warnings} onClick={() => setLogFilters((current) => ({ ...current, warnings: !current.warnings }))} />
+                <FilterToggle label="Service" active={logFilters.service} onClick={() => setLogFilters((current) => ({ ...current, service: !current.service }))} />
+                <FilterToggle label="Raw" active={logFilters.raw} onClick={() => setLogFilters((current) => ({ ...current, raw: !current.raw }))} />
+              </div>
             </div>
             <div className="log-list">
-              {logs.length === 0 ? <div className="empty-card">No recent log lines</div> : logs.slice(-12).map((line) => <LogLine key={line} line={line} />)}
+              {readableLogs.length === 0 ? (
+                <div className="empty-card">No recent log lines match the active filters</div>
+              ) : (
+                readableLogs.map((row) => <LogLine key={row.key} row={row} showRaw={logFilters.raw} />)
+              )}
             </div>
           </div>
         </section>
@@ -2210,31 +2247,251 @@ function buildTimeline(selected: WorkCard | undefined, state: SymphonyState | nu
   return rows;
 }
 
-function LogLine({ line }: { line: string }) {
-  const parsed = parseLog(line);
+function FilterToggle({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
-    <div className="log-row">
-      <span>{parsed.time}</span>
-      <b>{parsed.scope}</b>
-      <p>{parsed.message}</p>
+    <button className={`filter-toggle ${active ? "active" : ""}`} onClick={onClick} type="button">
+      {label}
+    </button>
+  );
+}
+
+function LogLine({ row, showRaw }: { row: ReadableLogRow; showRaw: boolean }) {
+  return (
+    <div className={`log-row severity-${row.severity} category-${row.category}`}>
+      <span className="log-time">{formatTime(row.timestamp)}</span>
+      <span className="log-scope">{row.issueIdentifier}</span>
+      <span className="log-severity">{row.severity === "info" ? row.category : row.severity}</span>
+      <div className="log-copy">
+        <strong>
+          {row.label}
+          {row.count > 1 ? ` x${row.count}` : ""}
+        </strong>
+        <p>{row.summary}</p>
+        {showRaw ? <pre>{row.raw}</pre> : null}
+      </div>
     </div>
   );
 }
 
-function parseLog(line: string) {
-  const match = line.match(/^(\S+)\s+(\S+)\s+(.*)$/);
-  if (!match) {
-    return { time: "", scope: "service", message: humanize(line) };
+function buildReadableLogs(lines: string[], filters: LogFilters) {
+  const collapsed = new Map<string, ReadableLogRow>();
+
+  for (const line of lines) {
+    const row = parseReadableLog(line);
+    const collapseKey = row.lowSignal ? `${row.category}:${row.severity}:${row.issueIdentifier}:${row.label}:${row.summary}` : row.key;
+    const existing = collapsed.get(collapseKey);
+    if (existing) {
+      collapsed.set(collapseKey, { ...existing, count: existing.count + 1, timestamp: row.timestamp, raw: row.raw });
+    } else {
+      collapsed.set(collapseKey, row);
+    }
   }
-  return { time: formatTime(match[1]), scope: match[2], message: humanize(match[3]) };
+
+  return [...collapsed.values()]
+    .filter((row) => shouldShowLogRow(row, filters))
+    .slice(-20);
 }
 
-function humanize(value: string) {
+function shouldShowLogRow(row: ReadableLogRow, filters: LogFilters) {
+  if ((row.severity === "warning" || row.severity === "error") && filters.warnings) {
+    return true;
+  }
+
+  if (row.lowSignal && !filters.raw) {
+    return false;
+  }
+
+  if (row.category === "agent") {
+    return filters.agent;
+  }
+
+  if (row.category === "service") {
+    return filters.service;
+  }
+
+  return filters.raw;
+}
+
+function parseReadableLog(line: string): ReadableLogRow {
+  const match = line.match(/^(\S+)\s+(\S+)\s+(\S+)(?:\s+(.*))?$/);
+  const timestamp = match?.[1] ?? "";
+  const scope = match?.[2] ?? "service";
+  const event = match?.[3] ?? "log";
+  const message = match?.[4] ?? (match ? "" : line);
+  const payload = parsePayload(message);
+  const method = readString(payload, "method") ?? event;
+  const eventText = `${event} ${message}`.toLowerCase();
+  const payloadText = JSON.stringify(payload ?? {}).toLowerCase();
+  const severity = classifyLogSeverity(eventText, payloadText);
+  const category = classifyLogCategory(scope, method, eventText, payload);
+  const lowSignal = isLowSignalLog(method, eventText, payloadText);
+  const label = readableLogLabel(scope, event, method, payload);
+  const summary = readableLogSummary(scope, event, message, method, payload, severity);
+
+  return {
+    key: `${timestamp}:${scope}:${event}:${message}`,
+    timestamp,
+    issueIdentifier: readableScope(scope, category),
+    severity,
+    category,
+    label,
+    summary,
+    raw: line,
+    count: 1,
+    lowSignal
+  };
+}
+
+function parsePayload(message: string): Record<string, unknown> | undefined {
+  const jsonStart = message.indexOf("{");
+  if (jsonStart < 0) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(message.slice(jsonStart));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function classifyLogSeverity(eventText: string, payloadText: string): LogSeverity {
+  if (/\b(error|failed|failure|exception|fatal)\b/.test(eventText) || /\b(error|failed|failure|exception|fatal)\b/.test(payloadText)) {
+    return "error";
+  }
+
+  if (/\b(warn|warning|untrusted|not trusted|denied|timeout|retry)\b/.test(eventText) || /\b(warn|warning|untrusted|not trusted|denied|timeout|retry)\b/.test(payloadText)) {
+    return "warning";
+  }
+
+  return "info";
+}
+
+function classifyLogCategory(scope: string, method: string, eventText: string, payload: Record<string, unknown> | undefined): LogCategory {
+  if (isIssueIdentifier(scope) || method.startsWith("session/") || method.startsWith("conversation/") || method.startsWith("item/") || method === "notification") {
+    return "agent";
+  }
+
+  if (payload || eventText.includes("{") || method.includes("/")) {
+    return "raw";
+  }
+
+  return "service";
+}
+
+function isLowSignalLog(method: string, eventText: string, payloadText: string) {
+  return method === "account/rateLimits/updated"
+    || eventText.includes("rate limit")
+    || eventText.includes("skill budget")
+    || payloadText.includes("skill budget")
+    || eventText.includes("item/started")
+    || eventText.includes("item/completed");
+}
+
+function readableLogLabel(scope: string, event: string, method: string, payload: Record<string, unknown> | undefined) {
+  if (method === "account/rateLimits/updated") {
+    return "Rate limits updated";
+  }
+
+  if (method === "session/started" || event.includes("started")) {
+    return isIssueIdentifier(scope) ? "Codex session started" : "Service started";
+  }
+
+  if (method === "session/completed" || event.includes("completed")) {
+    return isIssueIdentifier(scope) ? "Codex session completed" : "Completed";
+  }
+
+  if (method === "item/started") {
+    return "Agent step started";
+  }
+
+  if (method === "item/completed") {
+    return "Agent step completed";
+  }
+
+  const title = readString(payload, "title") ?? readString(payload, "event") ?? event;
+  return title
+    .replaceAll("_", " ")
+    .replaceAll("/", " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function readableLogSummary(
+  scope: string,
+  event: string,
+  message: string,
+  method: string,
+  payload: Record<string, unknown> | undefined,
+  severity: LogSeverity
+) {
+  const issuePrefix = isIssueIdentifier(scope) ? `${scope}: ` : "";
+  const payloadMessage = readString(payload, "message") ?? readString(payload, "text") ?? readNestedString(payload, ["params", "message"]);
+
+  if (method === "account/rateLimits/updated") {
+    return "Low-value rate limit telemetry collapsed by default.";
+  }
+
+  if (method === "session/started" || event.includes("started")) {
+    return `${issuePrefix}Codex session started`;
+  }
+
+  if (method === "session/completed" || event.includes("completed")) {
+    return `${issuePrefix}Codex session completed`;
+  }
+
+  if (payloadMessage) {
+    return severity === "warning" ? `Warning: ${payloadMessage}` : `${issuePrefix}${payloadMessage}`;
+  }
+
+  const plain = message.replace(/\{.*$/s, "").trim();
+  if (plain.length > 0) {
+    return severity === "warning" ? `Warning: ${humanizeLogText(plain)}` : `${issuePrefix}${humanizeLogText(plain)}`;
+  }
+
+  return `${issuePrefix}${readableLogLabel(scope, event, method, payload)}`;
+}
+
+function readableScope(scope: string, category: LogCategory) {
+  if (isIssueIdentifier(scope)) {
+    return scope;
+  }
+
+  if (scope.includes("codex_apps")) {
+    return "MCP";
+  }
+
+  return category === "service" ? "Service" : scope;
+}
+
+function isIssueIdentifier(value: string) {
+  return /^[A-Z][A-Z0-9]+-\d+$/i.test(value);
+}
+
+function readString(payload: Record<string, unknown> | undefined, key: string) {
+  const value = payload?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function readNestedString(payload: Record<string, unknown> | undefined, keys: string[]) {
+  let value: unknown = payload;
+  for (const key of keys) {
+    value = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>)[key] : undefined;
+  }
+
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function humanizeLogText(value: string) {
   return value
     .replaceAll("notification", "agent event")
-    .replaceAll("item/started", "reasoning started")
-    .replaceAll("item/completed", "reasoning completed")
-    .replaceAll("account/rateLimits/updated", "rate limits updated");
+    .replaceAll("item/started", "agent step started")
+    .replaceAll("item/completed", "agent step completed")
+    .replaceAll("account/rateLimits/updated", "rate limits updated")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function StatusPill({ tone, label }: { tone: string; label: string }) {
