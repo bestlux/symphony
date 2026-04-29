@@ -102,10 +102,10 @@ public sealed class ServiceRestartService
             $ErrorActionPreference = 'Stop'
             $exe = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{executable}}'))
             $cwd = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{cwd}}'))
-            $args = [string[]](ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{args}}')))
+            $launchArgs = [string[]](ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{args}}'))))
             Wait-Process -Id {{currentProcessId}} -ErrorAction SilentlyContinue
             Start-Sleep -Milliseconds 300
-            Start-Process -FilePath $exe -ArgumentList $args -WorkingDirectory $cwd -WindowStyle Hidden
+            Start-Process -FilePath $exe -ArgumentList $launchArgs -WorkingDirectory $cwd -WindowStyle Hidden
             """;
         var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
 
