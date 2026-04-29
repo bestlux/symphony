@@ -14,6 +14,7 @@ $requiredHeadings = @(
     "#### Context",
     "#### TL;DR",
     "#### Summary",
+    "#### Review Packet",
     "#### Linear",
     "#### Validation",
     "#### Risks"

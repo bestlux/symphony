@@ -114,6 +114,7 @@ type BoardIssue = {
   labels: string[];
   updated_at?: string;
   created_at?: string;
+  review_packet?: ReviewPacket;
   blocked_by?: Array<{ id?: string; identifier?: string; state?: string }>;
 };
 
@@ -166,8 +167,14 @@ type ReviewPacket = {
   risks: string[];
   followUps: string[];
   artifact: string[];
+  pr_url?: string | null;
+  workpad_status: string;
+  ready_for_human_review: boolean;
+  missing: string[];
   raw: string;
 };
+
+type PacketListKey = "summary" | "files" | "validation" | "links" | "risks" | "followUps" | "artifact";
 
 type ReviewItem = {
   key: string;
@@ -522,9 +529,9 @@ function ReviewWorkspace({
                   <StatusPill tone={stateToKind(item.state) === "merging" ? "violet" : "amber"} label={item.state} />
                 </div>
                 <h3>{item.title}</h3>
-                <p>{item.packet.summary[0] ?? item.reviewerStatus}</p>
+                <p>{item.packet.summary[0] ?? (item.packet.missing.length > 0 ? `Missing ${item.packet.missing.join(", ")}` : item.reviewerStatus)}</p>
                 <div className="card-footer">
-                  <span>{item.workspace ? "workspace linked" : "workspace missing"}</span>
+                  <span>{item.packet.pr_url ? "PR linked" : "PR missing"}</span>
                   <span>{item.lastActivity}</span>
                 </div>
               </button>
@@ -570,6 +577,9 @@ function ReviewWorkspace({
             </div>
 
             <div className="review-meta-grid">
+              <ReviewFact icon={<ShieldCheck size={16} />} label="Packet" value={selected.packet.ready_for_human_review ? "Ready" : `Missing ${selected.packet.missing.join(", ") || "evidence"}`} />
+              <ReviewFact icon={<ClipboardCheck size={16} />} label="Workpad" value={selected.packet.workpad_status || "-"} />
+              <ReviewFact icon={<LinkIcon size={16} />} label="PR" value={selected.packet.pr_url ?? "-"} />
               <ReviewFact icon={<GitBranch size={16} />} label="Branch" value={selected.branch ?? "-"} />
               <ReviewFact icon={<FolderOpen size={16} />} label="Workspace" value={selected.workspace || "-"} />
               <ReviewFact icon={<Activity size={16} />} label="Last Activity" value={selected.lastActivity} />
@@ -580,7 +590,7 @@ function ReviewWorkspace({
               <ReviewSection icon={<FileText size={16} />} title="Review Packet" items={selected.packet.summary} fallback={selected.packet.raw || selected.issue.description || "No review packet text found."} />
               <ReviewSection icon={<ListChecks size={16} />} title="Changed Files" items={selected.packet.files} fallback="No changed-file list found in the packet." mono />
               <ReviewSection icon={<ClipboardCheck size={16} />} title="Validation Results" items={selected.packet.validation} fallback="No validation result found in the packet." />
-              <ReviewSection icon={<LinkIcon size={16} />} title="Workspace / Branch / PR Links" items={[...selected.packet.artifact, ...selected.packet.links]} fallback={selected.branch ?? selected.url ?? "No artifact or PR link found in the packet."} />
+              <ReviewSection icon={<LinkIcon size={16} />} title="Workspace / Branch / PR Links" items={[selected.packet.pr_url, ...selected.packet.artifact, ...selected.packet.links].filter((item): item is string => Boolean(item))} fallback={selected.branch ?? selected.url ?? "No artifact or PR link found in the packet."} />
               <ReviewSection icon={<AlertTriangle size={16} />} title="Risks" items={selected.packet.risks} fallback="No risks listed." />
               <ReviewSection icon={<MessageSquare size={16} />} title="Follow-up Issues" items={selected.packet.followUps} fallback="No follow-up issues listed." />
             </div>
@@ -688,6 +698,7 @@ function buildReviewItems(board: BoardPayload | null, state: SymphonyState | nul
       const packetText = [issue.description, completed?.last_message, running?.last_message]
         .filter((value): value is string => Boolean(value?.trim()))
         .join("\n\n");
+      const packet = issue.review_packet ?? parseReviewPacket(packetText);
       const workspace = running?.workspace_path ?? completed?.workspace_path ?? "";
       const lastActivitySource = running?.last_event_at ?? completed?.completed_at ?? issue.updated_at ?? issue.created_at ?? "";
 
@@ -702,7 +713,7 @@ function buildReviewItems(board: BoardPayload | null, state: SymphonyState | nul
         workspace,
         reviewerStatus: reviewerStatus(issue, running, completed),
         lastActivity: lastActivitySource ? formatDate(lastActivitySource) : "-",
-        packet: parseReviewPacket(packetText),
+        packet,
         issue,
         running,
         completed
@@ -744,13 +755,20 @@ function parseReviewPacket(text: string): ReviewPacket {
     risks: [],
     followUps: [],
     artifact: [],
+    workpad_status: text.includes("## Codex Workpad") ? "found" : "missing",
+    ready_for_human_review: false,
+    missing: [],
     raw: text.trim()
   };
 
-  let current: keyof Omit<ReviewPacket, "raw"> = "summary";
+  let current: PacketListKey = "summary";
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || line === "---") {
+      continue;
+    }
+
+    if (/^[-*]\s+\[\s\]/.test(line)) {
       continue;
     }
 
@@ -773,16 +791,21 @@ function parseReviewPacket(text: string): ReviewPacket {
   }
 
   packet.links.push(...extractUrls(text));
-  return dedupePacket(packet);
+  return withReadiness(dedupePacket(packet));
 }
 
-function normalizePacketHeading(line: string): { section: keyof Omit<ReviewPacket, "raw">; inline?: string } | null {
+function normalizePacketHeading(line: string): { section: PacketListKey; inline?: string } | null {
+  const isMarkdownHeading = line.trimStart().startsWith("#");
   const normalized = line
     .replace(/^#+\s*/, "")
     .replace(/^\*\*(.*)\*\*$/, "$1")
     .replace(/^[-*]\s*/, "")
     .trim();
   const match = normalized.match(/^([^:]+):\s*(.*)$/);
+  if (!match && !isMarkdownHeading) {
+    return null;
+  }
+
   const label = (match?.[1] ?? normalized).toLowerCase();
   const inline = match?.[2]?.trim();
 
@@ -811,7 +834,7 @@ function normalizePacketHeading(line: string): { section: keyof Omit<ReviewPacke
   return null;
 }
 
-function inferPacketSection(line: string): keyof Omit<ReviewPacket, "raw"> | null {
+function inferPacketSection(line: string): PacketListKey | null {
   const lower = line.toLowerCase();
   if (/^[\w./\\-]+\.(cs|tsx|ts|css|json|slnx|xaml|md)$/i.test(line) || lower.includes("files changed")) {
     return "files";
@@ -844,7 +867,7 @@ function extractUrls(text: string) {
 }
 
 function firstPrUrl(packet: ReviewPacket) {
-  return [...packet.links, ...packet.artifact].find((item) =>
+  return packet.pr_url ?? [...packet.links, ...packet.artifact].find((item) =>
     /github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+/i.test(item));
 }
 
@@ -858,7 +881,29 @@ function dedupePacket(packet: ReviewPacket): ReviewPacket {
     risks: dedupe(packet.risks),
     followUps: dedupe(packet.followUps),
     artifact: dedupe(packet.artifact),
+    pr_url: packet.pr_url,
+    workpad_status: packet.workpad_status,
+    ready_for_human_review: packet.ready_for_human_review,
+    missing: dedupe(packet.missing),
     raw: packet.raw
+  };
+}
+
+function withReadiness(packet: ReviewPacket): ReviewPacket {
+  const prUrl = packet.pr_url ?? firstPrUrl(packet);
+  const missing = [
+    packet.summary.length === 0 ? "summary" : "",
+    packet.files.length === 0 ? "changed files" : "",
+    packet.validation.length === 0 ? "validation evidence" : "",
+    prUrl ? "" : "PR URL",
+    packet.workpad_status === "complete" ? "" : "completed workpad"
+  ].filter(Boolean);
+
+  return {
+    ...packet,
+    pr_url: prUrl,
+    missing,
+    ready_for_human_review: missing.length === 0
   };
 }
 
@@ -893,12 +938,12 @@ function latestCompletedByIssue(state: SymphonyState | null): Map<string, Comple
 function boardIssueCard(issue: BoardIssue, completed?: CompletedItem): WorkCard {
   const kind = stateToKind(issue.state);
   const workspace = completed?.workspace_path ?? "";
-  const packet = parseReviewPacket([issue.description, completed?.last_message]
+  const packet = issue.review_packet ?? parseReviewPacket([issue.description, completed?.last_message]
     .filter((value): value is string => Boolean(value?.trim()))
     .join("\n\n"));
-  const prUrl = firstPrUrl(packet);
+  const prUrl = packet.pr_url ?? firstPrUrl(packet);
   const validation = packet.validation[0] ?? "-";
-  const workpad = packet.raw.includes("## Codex Workpad") ? "found" : "-";
+  const workpad = packet.workpad_status || "-";
   const lastRun = completed ? `${completed.status} at ${formatDate(completed.completed_at)}` : "-";
   return {
     key: `board:${issue.issue_id}`,
@@ -920,6 +965,7 @@ function boardIssueCard(issue: BoardIssue, completed?: CompletedItem): WorkCard 
       ["Branch", issue.branch_name ?? "-"],
       ["PR", prUrl ?? "-"],
       ["Workpad", workpad],
+      ["Review Packet", packet.ready_for_human_review ? "ready" : `missing ${packet.missing.join(", ") || "evidence"}`],
       ["Workspace", workspace || "-"],
       ["Last run", lastRun],
       ["Validation", validation],

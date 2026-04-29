@@ -8,6 +8,7 @@ using Symphony.Core.Prompts;
 using Symphony.Core.Workflow;
 using Symphony.Linear;
 using Symphony.Service.Hosting;
+using Symphony.Service.Observability;
 using Symphony.Workspaces;
 using Xunit;
 
@@ -40,6 +41,27 @@ public sealed class ElixirAlignedWorkflowTests
     public void HumanReviewIsNotDispatched()
     {
         var config = TestConfig();
+        var orchestrator = new SymphonyOrchestrator(config, DateTimeOffset.UnixEpoch);
+
+        var decisions = orchestrator.ChooseDispatches(
+            config,
+            [Issue("1", "IOM-1", "Human Review")],
+            DateTimeOffset.UnixEpoch);
+
+        Assert.Empty(decisions);
+    }
+
+    [Fact]
+    public void HumanReviewIsNotDispatchedEvenWhenWorkflowConfigIncludesIt()
+    {
+        var config = TestConfig() with
+        {
+            Tracker = TestConfig().Tracker with
+            {
+                ActiveStates = ["Todo", "In Progress", "Human Review", "Merging", "Rework"],
+                DispatchStates = ["Todo", "In Progress", "Human Review", "Merging", "Rework"]
+            }
+        };
         var orchestrator = new SymphonyOrchestrator(config, DateTimeOffset.UnixEpoch);
 
         var decisions = orchestrator.ChooseDispatches(
@@ -89,6 +111,104 @@ public sealed class ElixirAlignedWorkflowTests
 
         Assert.Equal(new[] { "Todo", "In Progress", "Merging", "Rework" }, config.Tracker.ActiveStates);
         Assert.Equal(new[] { "Todo", "In Progress", "Merging", "Rework" }, config.Tracker.DispatchStates);
+    }
+
+    [Fact]
+    public void ReviewPacketUsesWorkpadAndPrAttachmentEvidence()
+    {
+        var issue = new Issue(
+            "1",
+            "IOM-1",
+            "Test issue",
+            "Test body",
+            1,
+            "Human Review",
+            "codex/iom-1",
+            "https://linear.app/iomancer/issue/IOM-1",
+            [],
+            [],
+            DateTimeOffset.UnixEpoch,
+            DateTimeOffset.UnixEpoch,
+            null,
+            true,
+            [
+                new IssueComment(
+                    "comment-1",
+                    """
+                    ## Codex Workpad
+
+                    ### Plan
+                    - [x] Implement packet API
+
+                    ### Acceptance Criteria
+                    - [x] Operator shows packet fields
+
+                    ### Validation
+                    - [x] targeted tests: `.\scripts\validate-symphony.ps1` passed
+
+                    ### Notes
+
+                    ### Summary
+                    - Adds a structured review packet API.
+
+                    ### Changed Files
+                    - dotnet/src/Symphony.Service/Observability/HttpApi.cs
+
+                    ### Risks
+                    - None known.
+
+                    ### Follow-up Issues
+                    - None.
+                    """,
+                    DateTimeOffset.UnixEpoch,
+                    DateTimeOffset.UnixEpoch)
+            ],
+            [new IssueLink("attachment-1", "PR #123", "https://github.com/bestlux/symphony/pull/123", "github")]);
+
+        var packet = ReviewPacketBuilder.Build(issue, running: null, completed: null);
+
+        Assert.True(packet.ReadyForHumanReview);
+        Assert.Equal("complete", packet.WorkpadStatus);
+        Assert.Equal("https://github.com/bestlux/symphony/pull/123", packet.PrUrl);
+        Assert.Contains("Adds a structured review packet API.", packet.Summary);
+        Assert.Contains("dotnet/src/Symphony.Service/Observability/HttpApi.cs", packet.Files);
+        Assert.Contains(packet.Validation, item => item.Contains(".\\scripts\\validate-symphony.ps1", StringComparison.Ordinal));
+        Assert.Empty(packet.Missing);
+    }
+
+    [Fact]
+    public void ReviewPacketReportsMissingHumanReviewEvidence()
+    {
+        var issue = Issue(
+            "1",
+            "IOM-1",
+            "Human Review",
+            branchName: "codex/iom-1") with
+        {
+            Comments =
+            [
+                new IssueComment(
+                    "comment-1",
+                    """
+                    ## Codex Workpad
+
+                    ### Plan
+                    - [ ] Finish validation
+                    """,
+                    DateTimeOffset.UnixEpoch,
+                    DateTimeOffset.UnixEpoch)
+            ]
+        };
+
+        var packet = ReviewPacketBuilder.Build(issue, running: null, completed: null);
+
+        Assert.False(packet.ReadyForHumanReview);
+        Assert.Equal("incomplete (1 unchecked)", packet.WorkpadStatus);
+        Assert.Contains("summary", packet.Missing);
+        Assert.Contains("changed files", packet.Missing);
+        Assert.Contains("validation evidence", packet.Missing);
+        Assert.Contains("PR URL", packet.Missing);
+        Assert.Contains("completed workpad", packet.Missing);
     }
 
     [Fact]

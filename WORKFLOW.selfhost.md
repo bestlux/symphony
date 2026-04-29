@@ -160,6 +160,10 @@ No description provided.
 - `Rework`: reviewer requested changes; restart from a fresh approach while preserving issue context.
 - `Done`: terminal; do nothing.
 
+Legacy reviewer-loop state names are not canonical in this workflow. Do not move
+issues to `Running`, `Ready for Review`, `Reviewing`, `In Review`, or `Blocked`
+when executing this flow.
+
 ## Step 0: Route by current state
 
 1. Fetch this issue by ID and read its current state.
@@ -234,7 +238,12 @@ Before editing code:
 5. Push and create/update a PR with the `push` skill.
 6. Attach or link the PR to Linear.
 7. Poll PR feedback and checks. Resolve or explicitly push back on every actionable comment.
-8. Move the issue to `Human Review` only after:
+8. Before moving the issue to `Human Review`, populate the single
+   `## Codex Workpad` comment and the PR body with a review packet containing:
+   summary, changed files, validation evidence, PR URL, workpad status, risks,
+   and follow-up issues. Use `None known.` or `None.` for empty risks and
+   follow-ups instead of omitting the fields.
+9. Move the issue to `Human Review` only after:
    - workpad plan/acceptance/validation are complete,
    - branch is pushed,
    - PR is linked,
