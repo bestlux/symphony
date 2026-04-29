@@ -163,7 +163,7 @@ type WorkCard = {
   worker: string;
   workspace: string;
   primaryTime: string;
-  tokens: number;
+  tokens: Tokens;
   message: string;
   state: string;
   status: string;
@@ -367,7 +367,7 @@ function App() {
           <div className="topbar-status">
             <StatusPill tone={health?.operator_actions_available ? "green" : "red"} label={health?.operator_actions_available ? "Actions ready" : "Disconnected"} />
             <StatusPill tone="blue" label="PR-first flow" />
-            <StatusPill tone="slate" label={`${formatNumber(state?.codex_totals.total_tokens ?? 0)} tokens`} />
+            <StatusPill tone="slate" label={formatCompactTokens(state?.codex_totals.total_tokens ?? 0, "tokens")} />
             <button onClick={() => void restartService()} disabled={busyAction !== "" || restarting}>
               <Power size={16} /> {restarting ? "Restarting" : "Restart"}
             </button>
@@ -435,7 +435,7 @@ function App() {
                           <p>{card.subtitle}</p>
                           <div className="card-footer">
                             <span>{card.worker}</span>
-                            <span>{formatNumber(card.tokens)} tok</span>
+                            <span className="token-count" title={formatTokenTitle(card.tokens)}>{formatCompactTokens(card.tokens.total_tokens)}</span>
                           </div>
                         </button>
                       ))
@@ -1129,10 +1129,6 @@ function workspaceStatus(status?: string, clean?: boolean) {
   return `${state}; ${clean ? "clean" : "dirty or unknown"}`;
 }
 
-function emptyTokens(): Tokens {
-  return { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
-}
-
 function ageMs(value?: string) {
   if (!value) {
     return undefined;
@@ -1476,15 +1472,30 @@ function withReadiness(packet: ReviewPacket): ReviewPacket {
 }
 
 function buildLanes(state: SymphonyState | null, board: BoardPayload | null): Lane[] {
-  const activeRuntimeCards = state ? [...state.running.map(runningCard), ...state.retrying.map(retryCard)] : [];
-  const activeRuntimeKeys = new Set(activeRuntimeCards.map((card) => card.issueId));
+  const runningByIssue = new Map((state?.running ?? []).map((item) => [item.issue_id, item]));
+  const retryingByIssue = new Map((state?.retrying ?? []).map((item) => [item.issue_id, item]));
   const completedByIssue = latestCompletedByIssue(state);
+  const boardIssueIds = new Set<string>();
   const boardCards = board
     ? board.lanes.flatMap((lane) => lane.issues)
-        .filter((issue) => !activeRuntimeKeys.has(issue.issue_id))
-        .map((issue) => boardIssueCard(issue, completedByIssue.get(issue.issue_id)))
+        .map((issue) => {
+          boardIssueIds.add(issue.issue_id);
+          return boardIssueCard(
+            issue,
+            runningByIssue.get(issue.issue_id),
+            retryingByIssue.get(issue.issue_id),
+            completedByIssue.get(issue.issue_id));
+        })
     : [];
-  const cards = [...activeRuntimeCards, ...boardCards];
+  const runtimeOnlyCards = state
+    ? [
+        ...state.running.filter((item) => !boardIssueIds.has(item.issue_id)).map(runningCard),
+        ...state.retrying
+          .filter((item) => !boardIssueIds.has(item.issue_id))
+          .map((item) => retryCard(item, completedByIssue.get(item.issue_id)))
+      ]
+    : [];
+  const cards = [...boardCards, ...runtimeOnlyCards];
   return laneMeta.map((lane) => ({
     ...lane,
     cards: cards.filter((card) => card.kind === lane.key)
@@ -1503,39 +1514,53 @@ function latestCompletedByIssue(state: SymphonyState | null): Map<string, Comple
   return completedByIssue;
 }
 
-function boardIssueCard(issue: BoardIssue, completed?: CompletedItem): WorkCard {
+function boardIssueCard(
+  issue: BoardIssue,
+  running?: RunningItem,
+  retrying?: RetryItem,
+  completed?: CompletedItem
+): WorkCard {
   const kind = stateToKind(issue.state);
-  const workspace = completed?.workspace_path ?? "";
-  const packet = issue.review_packet ?? parseReviewPacket([issue.description, completed?.last_message]
+  const tokens = running?.tokens ?? completed?.tokens ?? emptyTokens();
+  const workspace = running?.workspace_path ?? retrying?.workspace_path ?? completed?.workspace_path ?? "";
+  const worker = running?.worker_host
+    ?? retrying?.worker_host
+    ?? completed?.worker_host
+    ?? (kind === "human-review" ? "human" : kind === "merging" ? "land" : kind === "rework" ? "agent" : "linear");
+  const packet = issue.review_packet ?? parseReviewPacket([issue.description, completed?.last_message, running?.last_message]
     .filter((value): value is string => Boolean(value?.trim()))
     .join("\n\n"));
   const prUrl = packet.pr_url ?? firstPrUrl(packet);
   const validation = packet.validation[0] ?? "-";
   const workpad = packet.workpad_status || "-";
   const lastRun = completed ? `${completed.status} at ${formatDate(completed.completed_at)}` : "-";
+  const runtimeStatus = running?.last_event ?? retrying?.error ?? completed?.status ?? "Linear";
+  const message = running?.last_message ?? completed?.last_message ?? retrying?.error ?? issue.description ?? "";
   return {
     key: `board:${issue.issue_id}`,
     kind,
     issueId: issue.issue_id,
     identifier: issue.issue_identifier,
     title: issue.title,
-    subtitle: issue.labels.length > 0 ? issue.labels.join(", ") : issue.state,
-    worker: kind === "human-review" ? "human" : kind === "merging" ? "land" : kind === "rework" ? "agent" : "linear",
+    subtitle: running?.last_event ?? retrying?.error ?? (issue.labels.length > 0 ? issue.labels.join(", ") : issue.state),
+    worker,
     workspace,
-    primaryTime: issue.updated_at ? formatTime(issue.updated_at) : "-",
-    tokens: completed?.tokens.total_tokens ?? 0,
-    message: completed?.last_message ?? issue.description ?? "",
+    primaryTime: running?.last_event_at ? formatTime(running.last_event_at) : issue.updated_at ? formatTime(issue.updated_at) : "-",
+    tokens,
+    message,
     state: issue.state,
-    status: completed?.status ?? "Linear",
+    status: runtimeStatus,
     details: [
       ["State", issue.state || "-"],
       ["Priority", issue.priority?.toString() ?? "-"],
       ["Branch", issue.branch_name ?? "-"],
+      ...tokenDetails(tokens),
       ["PR", prUrl ?? "-"],
       ["Workpad", workpad],
       ["Review Packet", packet.ready_for_human_review ? "ready" : `missing ${packet.missing.join(", ") || "evidence"}`],
       ["Workspace", workspace || "-"],
       ["Last run", lastRun],
+      ["Runtime", runtimeStatus],
       ["Validation", validation],
       ["PR / Landing", completed?.status ?? completed?.cleanup_outcome ?? "-"],
       ["Labels", issue.labels.length > 0 ? issue.labels.join(", ") : "-"],
@@ -1585,12 +1610,13 @@ function runningCard(item: RunningItem): WorkCard {
     worker: item.worker_host ?? "worker",
     workspace: item.workspace_path ?? "",
     primaryTime: formatTime(item.started_at),
-    tokens: item.tokens.total_tokens,
+    tokens: item.tokens,
     message: item.last_message ?? "",
     state: item.state,
     status: item.last_event ?? "active",
     details: [
       ["State", item.state || "-"],
+      ...tokenDetails(item.tokens),
       ["Worker", item.worker_host ?? "-"],
       ["Session", item.session_id ?? "-"],
       ["Thread", item.thread_id ?? "-"],
@@ -1604,7 +1630,8 @@ function runningCard(item: RunningItem): WorkCard {
   };
 }
 
-function retryCard(item: RetryItem): WorkCard {
+function retryCard(item: RetryItem, completed?: CompletedItem): WorkCard {
+  const tokens = completed?.tokens ?? emptyTokens();
   return {
     key: `retry:${item.issue_id}`,
     kind: "rework",
@@ -1615,12 +1642,13 @@ function retryCard(item: RetryItem): WorkCard {
     worker: item.worker_host ?? "worker",
     workspace: item.workspace_path ?? "",
     primaryTime: formatTime(item.due_at),
-    tokens: 0,
+    tokens,
     message: item.error ?? "",
     state: "Rework",
     status: "retrying",
     details: [
       ["Attempt", String(item.attempt)],
+      ...tokenDetails(tokens),
       ["Due", formatDate(item.due_at)],
       ["Worker", item.worker_host ?? "-"],
       ["Workspace", item.workspace_path ?? "-"],
@@ -1648,13 +1676,14 @@ function completedCard(item: CompletedItem): WorkCard {
     worker: item.worker_host ?? "worker",
     workspace: item.workspace_path ?? "",
     primaryTime: formatTime(item.completed_at),
-    tokens: item.tokens.total_tokens,
+    tokens: item.tokens,
     message: item.last_message ?? item.error ?? "",
     state: item.state,
     status: item.status,
     details: [
       ["State", item.state || "-"],
       ["Status", item.status || "-"],
+      ...tokenDetails(item.tokens),
       ["Worker", item.worker_host ?? "-"],
       ["Session", item.session_id ?? "-"],
       ["Started", formatDate(item.started_at)],
@@ -1740,6 +1769,37 @@ function formatTime(value: string) {
 function formatDate(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+}
+
+function emptyTokens(): Tokens {
+  return {
+    input_tokens: 0,
+    output_tokens: 0,
+    total_tokens: 0
+  };
+}
+
+function tokenDetails(tokens: Tokens): Array<[string, string]> {
+  return [
+    ["Input tokens", formatNumber(tokens.input_tokens)],
+    ["Output tokens", formatNumber(tokens.output_tokens)],
+    ["Total tokens", formatNumber(tokens.total_tokens)]
+  ];
+}
+
+function formatTokenTitle(tokens: Tokens) {
+  return `Input ${formatNumber(tokens.input_tokens)} | Output ${formatNumber(tokens.output_tokens)} | Total ${formatNumber(tokens.total_tokens)}`;
+}
+
+function formatCompactTokens(value: number, noun = "tok") {
+  return `${formatCompactNumber(value)} ${noun}`;
+}
+
+function formatCompactNumber(value: number) {
+  return new Intl.NumberFormat(undefined, {
+    notation: "compact",
+    maximumFractionDigits: 1
+  }).format(value).toLowerCase();
 }
 
 function formatNumber(value: number) {
